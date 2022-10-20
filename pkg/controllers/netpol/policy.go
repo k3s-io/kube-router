@@ -149,6 +149,20 @@ func (npc *NetworkPolicyControllerIptables) syncNetworkPolicyChains(networkPolic
 				}
 				activePolicyIPSets[targetSourcePodIPSetName] = true
 			}
+			// Extra logs to get more information about the policy dropping the packet via ulog2
+			logRuleComment := "\"rule to log dropped traffic\""
+
+			// The network policy annotation can include a log config
+			limit, limitBurst := getIptablesNFlogLimit(policy.annotations)
+
+			// LogComment is capped at 64 characters and we are using 16, hence policyNamespace and policyName
+			// must fit in 48 characters otherwise we can only log the first 24 characters
+			policyNamespaceAndName := safeJoin(policy.namespace, policy.name)
+			logComment := "\"DROP by policy " + policyNamespaceAndName + "\""
+			logArgs := []string{"-A", policyChainName, "-m", "comment", "--comment", logRuleComment, "-m", "limit",
+				"--limit", limit, "--limit-burst", limitBurst, "-m", "mark", "!", "--mark", "0x10000/0x10000",
+				"-j", "NFLOG", "--nflog-group", "100", "--nflog-prefix", logComment, "\n"}
+			npc.filterTableRules[ipFamily].WriteString(strings.Join(logArgs, " "))
 		}
 	}
 
@@ -509,6 +523,7 @@ func (npc *NetworkPolicyControllerBase) buildNetworkPoliciesInfo() ([]networkPol
 			namespace:   policy.Namespace,
 			podSelector: podSelector,
 			policyType:  kubeIngressPolicyType,
+			annotations: policy.Annotations,
 		}
 
 		ingressType, egressType := false, false
