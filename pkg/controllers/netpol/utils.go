@@ -5,15 +5,21 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/cloudnativelabs/kube-router/v2/pkg/utils"
 	api "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	klog "k8s.io/klog/v2"
 	netutils "k8s.io/utils/net"
 )
 
 const (
 	PodCompleted api.PodPhase = "Completed"
+)
+
+var (
+	stringSuffixes = sets.NewString("second", "minute", "hour", "day", "s", "m", "h", "d")
 )
 
 // isPodUpdateNetPolRelevant checks the attributes that we care about for building NetworkPolicies on the host and if it
@@ -119,7 +125,7 @@ func (npc *NetworkPolicyController) createPodWithPortPolicyRule(ports []protocol
 		comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 			policy.name + " namespace " + policy.namespace
 		if err := npc.appendRuleToPolicyChain(policyName, comment, srcSetName, dstSetName, portProtocol.protocol,
-			portProtocol.port, portProtocol.endport, ipFamily); err != nil {
+			portProtocol.port, portProtocol.endport, ipFamily, policy); err != nil {
 			return err
 		}
 	}
@@ -173,4 +179,85 @@ func ipSetName(setName string, ipFamily api.IPFamily) string {
 	} else {
 		return utils.IPSetName(setName, true)
 	}
+}
+
+// safeJoin joins the namespace and name, ensuring that the result is less than or equal to 48 characters
+func safeJoin(namespace string, name string) string {
+	const minLen, maxLen = 24, 48
+	if (len(namespace) + len(name)) < maxLen {
+		return namespace + "/" + name
+	}
+
+	// We must create at least one substring
+	if len(namespace) < minLen {
+		lengthSubString := (maxLen - len(namespace) - 1)
+		return namespace + "/" + name[0:lengthSubString]
+	}
+
+	if len(name) < minLen {
+		lengthSubString := (maxLen - len(name) - 1)
+		return namespace[0:lengthSubString] + "/" + name
+	}
+
+	// If we arrive here, both are over 24 characters
+	return namespace[0:23] + "/" + name[0:23]
+}
+
+// getIptablesNFlogLimit reads the annotations setting the nflog limit and limit-burst config
+// "kube-router.io/netpol-nflog-limit" and "kube-router.io/netpol-nflog-limit-burst"
+func getIptablesNFlogLimit(annotations map[string]string) (string, string) {
+	defaultLimit := "10/minute"
+	defaultLimitBurst := "10"
+
+	limit, ok := annotations["kube-router.io/netpol-nflog-limit"]
+	if !ok {
+		limit = defaultLimit
+	}
+
+	limitBurst, ok := annotations["kube-router.io/netpol-nflog-limit-burst"]
+	if !ok {
+		limitBurst = defaultLimitBurst
+	}
+
+	if !areNFlogParamsCorrect(limit, limitBurst) {
+		klog.Warning("Network Policy annotations are wrong, default values will be used. Check the docs for more information")
+		return defaultLimit, defaultLimitBurst
+	}
+
+	return limit, limitBurst
+}
+
+// areNFlogParamsCorrect verifies that the nflog parameters are correct
+//   - kube-router.io/netpol-nflog-limit must be an integer, with an optional "/second", "/minute", "/hour", "/day"
+//     or the first character of each time unit
+//   - kube-router.io/netpol-nflog-limit-burst must be an integer
+func areNFlogParamsCorrect(limit string, limitBurst string) bool {
+
+	// If limit does not set a time unit, check if limit and limitBurst are integers
+	param := strings.Split(limit, "/")
+	if len(param) == 1 {
+		if isInteger(param[0]) && isInteger(limitBurst) {
+			return true
+		}
+	}
+
+	// If limit sets a time unit, check if it is among the supported ones
+	if len(param) == 2 {
+		if stringSuffixes.Has(param[1]) {
+			// If the time unit is supported, check that limit and limitBurst are integers
+			if isInteger(param[0]) && isInteger(limitBurst) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isInteger returns true if the passed value is an integer
+func isInteger(x string) bool {
+	if _, err := strconv.Atoi(x); err == nil {
+		return true
+	}
+	return false
 }
