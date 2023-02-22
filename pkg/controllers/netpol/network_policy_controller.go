@@ -503,7 +503,7 @@ func (npc *NetworkPolicyController) ensureExplicitAccept() {
 		for _, chain := range defaultChains {
 			comment := "\"rule to explicitly ACCEPT traffic that comply to network policies\""
 			args := []string{"-m", "comment", "--comment", comment, "-m", "mark", "--mark", "0x20000/0x20000",
-				"-j", "ACCEPT"}
+				"-j", "RETURN"}
 			utils.AppendUnique(filterTableRules, chain, args)
 		}
 	}
