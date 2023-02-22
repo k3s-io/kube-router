@@ -574,12 +574,32 @@ func (npc *NetworkPolicyController) ensureTopLevelChains() {
 func (npc *NetworkPolicyController) ensureExplicitAccept() {
 	// for the traffic to/from the local pod's let network policy controller be
 	// authoritative entity to ACCEPT the traffic if it complies to network policies
-	for _, filterTableRules := range npc.filterTableRules {
-		for _, chain := range defaultChains {
-			comment := "\"rule to explicitly ACCEPT traffic that comply to network policies\""
+	for ipFamily, filterTableRules := range npc.filterTableRules {
+		iptablesCmdHandler := npc.iptablesCmdHandlers[ipFamily]
+		for mainChain := range defaultChains {
+			comment := "\"KUBE-ROUTER rule to explicitly ACCEPT traffic that comply to network policies\""
 			args := []string{"-m", "comment", "--comment", comment, "-m", "mark", "--mark", "0x20000/0x20000",
 				"-j", "ACCEPT"}
-			utils.AppendUnique(filterTableRules, chain, args)
+			exists, err := utils.Exists(filterTableRules, mainChain, args)
+			if err != nil {
+				utils.AppendUnique(filterTableRules, mainChain, args)
+			} else if !exists {
+				rules, err := iptablesCmdHandler.List("filter", mainChain)
+				if err != nil {
+					utils.AppendUnique(filterTableRules, mainChain, args)
+				} else {
+					newRulePos := 0
+					for pos, rule := range rules {
+						if strings.Contains(rule, "KUBE") {
+							newRulePos = pos
+						}
+					}
+					err = utils.Insert(filterTableRules, mainChain, newRulePos+1, args)
+					if err != nil {
+						utils.AppendUnique(filterTableRules, mainChain, args)
+					}
+				}
+			}
 		}
 	}
 }
