@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base32"
+	"flag"
 	"fmt"
 	"net"
 	"strconv"
@@ -734,6 +735,13 @@ func NewNetworkPolicyController(clientset kubernetes.Interface,
 	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler,
 	ipSetHandlers map[v1core.IPFamily]utils.IPSetHandler) (*NetworkPolicyController, error) {
 	npc := NetworkPolicyController{ipsetMutex: ipsetMutex}
+
+	// init klog here since we don't run kube-router main in k3s
+	klog.InitFlags(nil)
+	err := flag.Set("v", config.VLevel)
+	if err != nil {
+		klog.Errorf("failed to set flag: %s", err)
+	}
 
 	// Creating a single-item buffered channel to ensure that we only keep a single full sync request at a time,
 	// additional requests would be pointless to queue since after the first one was processed the system would already
