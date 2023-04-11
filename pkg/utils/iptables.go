@@ -136,6 +136,41 @@ func Append(buffer *bytes.Buffer, chain string, rule []string) {
 	buffer.WriteString(ruleStr)
 }
 
+func Exists(buffer *bytes.Buffer, chain string, rule []string) (bool, error){
+	rules := strings.Split(buffer.String(), "\n")
+	if len(rules) > 0 && rules[len(rules)-1] == "" {
+		rules = rules[:len(rules)-1]
+	}
+
+	for _, foundRule := range rules {
+		if strings.Contains(foundRule, chain) && strings.Contains(foundRule, strings.Join(rule, " ")) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func Insert(buffer *bytes.Buffer, chain string, pos int, rule []string) {
+	rules := strings.Split(buffer.String(), "\n")
+	if len(rules) > 0 && rules[len(rules)-1] == "" {
+		rules = rules[:len(rules)-1]
+	}
+	buffer.Reset()
+
+	chainPos := 0
+
+	for _, foundRule := range rules {
+		buffer.WriteString(foundRule + "\n")
+		if strings.Contains(foundRule, chain) && strings.Contains(foundRule, "-A") {
+			chainPos = chainPos + 1
+			if chainPos == pos - 1 {
+				ruleStr := strings.Join(append(append([]string{"-A", chain}, rule...), "\n"), " ")
+				buffer.WriteString(ruleStr)
+			}
+		}
+	}
+}
+
 // IPTablesSaveRestorer interface that defines functions to save and restore tables
 type IPTablesSaveRestorer interface {
 	SaveInto(table string, buffer *bytes.Buffer) error
