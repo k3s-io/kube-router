@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -150,7 +151,10 @@ func Exists(buffer *bytes.Buffer, chain string, rule []string) (bool, error){
 	return false, nil
 }
 
-func Insert(buffer *bytes.Buffer, chain string, pos int, rule []string) {
+func Insert(buffer *bytes.Buffer, chain string, pos int, rule []string) error {
+	if pos < 1 {
+		return errors.New("Invalid rule number")
+	}
 	rules := strings.Split(buffer.String(), "\n")
 	if len(rules) > 0 && rules[len(rules)-1] == "" {
 		rules = rules[:len(rules)-1]
@@ -158,17 +162,30 @@ func Insert(buffer *bytes.Buffer, chain string, pos int, rule []string) {
 	buffer.Reset()
 
 	chainPos := 0
+	inserted := false
 
 	for _, foundRule := range rules {
-		buffer.WriteString(foundRule + "\n")
-		if strings.Contains(foundRule, chain) && strings.Contains(foundRule, "-A") {
-			chainPos = chainPos + 1
-			if chainPos == pos - 1 {
-				ruleStr := strings.Join(append(append([]string{"-A", chain}, rule...), "\n"), " ")
-				buffer.WriteString(ruleStr)
+		if !inserted && strings.Contains(foundRule, chain) && strings.Contains(foundRule, "-A") {
+			ruleStrings := strings.SplitN(foundRule, " ", 3)
+			if len(ruleStrings) > 1 && chain == ruleStrings[1] {
+				chainPos = chainPos + 1
+				if chainPos == pos {
+					inserted = true
+					ruleStr := strings.Join(append(append([]string{"-A", chain}, rule...), "\n"), " ")
+					buffer.WriteString(ruleStr)
+				}
 			}
 		}
+		buffer.WriteString(foundRule + "\n")
 	}
+	if !inserted && chainPos + 1 == pos {
+		ruleStr := strings.Join(append(append([]string{"-A", chain}, rule...), "\n"), " ")
+		buffer.WriteString(ruleStr)
+	} else if !inserted {
+		return errors.New("Index of insertion too big.")
+	}
+	return nil
+
 }
 
 // IPTablesSaveRestorer interface that defines functions to save and restore tables
