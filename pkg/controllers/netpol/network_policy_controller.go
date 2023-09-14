@@ -16,7 +16,6 @@ import (
 	"github.com/cloudnativelabs/kube-router/v2/pkg/options"
 	"github.com/cloudnativelabs/kube-router/v2/pkg/utils"
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/klog/v2"
 
 	v1core "k8s.io/api/core/v1"
@@ -501,7 +500,7 @@ func (npc *NetworkPolicyController) ensureExplicitAccept() {
 	// authoritative entity to ACCEPT the traffic if it complies to network policies
 	for ipFamily, filterTableRules := range npc.filterTableRules {
 		iptablesCmdHandler := npc.iptablesCmdHandlers[ipFamily]
-		for mainChain, _ := range defaultChains {
+		for mainChain := range defaultChains {
 			comment := "\"KUBE-ROUTER rule to explicitly ACCEPT traffic that comply to network policies\""
 			args := []string{"-m", "comment", "--comment", comment, "-m", "mark", "--mark", "0x20000/0x20000",
 				"-j", "ACCEPT"}
@@ -519,11 +518,11 @@ func (npc *NetworkPolicyController) ensureExplicitAccept() {
 							newRulePos = pos
 						}
 					}
-					utils.Insert(filterTableRules, mainChain, newRulePos + 1, args)
+					utils.Insert(filterTableRules, mainChain, newRulePos+1, args)
 				}
-                        }
-                }
-        }
+			}
+		}
+	}
 }
 
 // Creates custom chains KUBE-NWPLCY-DEFAULT
@@ -825,8 +824,8 @@ func NewNetworkPolicyController(clientset kubernetes.Interface,
 
 	if config.MetricsEnabled {
 		// Register the metrics for this controller
-		prometheus.MustRegister(metrics.ControllerIptablesSyncTime)
-		prometheus.MustRegister(metrics.ControllerPolicyChainsSyncTime)
+		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesSyncTime)
+		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyChainsSyncTime)
 		npc.MetricsEnabled = true
 	}
 
