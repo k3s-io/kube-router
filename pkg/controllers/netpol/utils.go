@@ -125,7 +125,7 @@ func (npc *NetworkPolicyController) createPodWithPortPolicyRule(ports []protocol
 		comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 			policy.name + " namespace " + policy.namespace
 		if err := npc.appendRuleToPolicyChain(policyName, comment, srcSetName, dstSetName, portProtocol.protocol,
-			portProtocol.port, portProtocol.endport, ipFamily, policy); err != nil {
+			portProtocol.port, portProtocol.endport, ipFamily); err != nil {
 			return err
 		}
 	}
