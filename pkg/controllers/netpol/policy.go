@@ -149,6 +149,20 @@ func (npc *NetworkPolicyController) syncNetworkPolicyChains(networkPoliciesInfo 
 				}
 				activePolicyIPSets[targetSourcePodIPSetName] = true
 			}
+			// Extra logs to get more information about the policy dropping the packet via ulog2
+			logRuleComment := "\"rule to log dropped traffic\""
+
+			// The network policy annotation can include a log config
+			limit, limitBurst := getIptablesNFlogLimit(policy.annotations)
+
+			// LogComment is capped at 64 characters and we are using 16, hence policyNamespace and policyName
+			// must fit in 48 characters otherwise we can only log the first 24 characters
+			policyNamespaceAndName := safeJoin(policy.namespace, policy.name)
+			logComment := "\"DROP by policy " + policyNamespaceAndName + "\""
+			logArgs := []string{"-A", policyChainName, "-m", "comment", "--comment", logRuleComment, "-m", "limit",
+				"--limit", limit, "--limit-burst", limitBurst, "-m", "mark", "!", "--mark", "0x10000/0x10000",
+				"-j", "NFLOG", "--nflog-group", "100", "--nflog-prefix", logComment, "\n"}
+			npc.filterTableRules[ipFamily].WriteString(strings.Join(logArgs, " "))
 		}
 	}
 
@@ -234,7 +248,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 					comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 						policy.name + " namespace " + policy.namespace
 					if err := npc.appendRuleToPolicyChain(policyChainName, comment, srcPodIPSetName, namedPortIPSetName,
-						endPoints.protocol, endPoints.port, endPoints.endport, ipFamily, policy); err != nil {
+						endPoints.protocol, endPoints.port, endPoints.endport, ipFamily); err != nil {
 						return err
 					}
 				}
@@ -247,7 +261,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 				comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName,
-					comment, srcPodIPSetName, targetDestPodIPSetName, "", "", "", ipFamily, policy); err != nil {
+					comment, srcPodIPSetName, targetDestPodIPSetName, "", "", "", ipFamily); err != nil {
 					return err
 				}
 			}
@@ -260,7 +274,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 				comment := "rule to ACCEPT traffic from all sources to dest pods selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, "", targetDestPodIPSetName,
-					portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily, policy); err != nil {
+					portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily); err != nil {
 					return err
 				}
 			}
@@ -278,7 +292,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 				comment := "rule to ACCEPT traffic from all sources to dest pods selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, "", namedPortIPSetName,
-					endPoints.protocol, endPoints.port, endPoints.endport, ipFamily, policy); err != nil {
+					endPoints.protocol, endPoints.port, endPoints.endport, ipFamily); err != nil {
 					return err
 				}
 			}
@@ -290,7 +304,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 			comment := "rule to ACCEPT traffic from all sources to dest pods selected by policy name: " +
 				policy.name + " namespace " + policy.namespace
 			if err := npc.appendRuleToPolicyChain(policyChainName, comment, "", targetDestPodIPSetName,
-				"", "", "", ipFamily, policy); err != nil {
+				"", "", "", ipFamily); err != nil {
 				return err
 			}
 		}
@@ -306,7 +320,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 						policy.name + " namespace " + policy.namespace
 					if err := npc.appendRuleToPolicyChain(policyChainName, comment, srcIPBlockIPSetName,
 						targetDestPodIPSetName, portProtocol.protocol, portProtocol.port,
-						portProtocol.endport, ipFamily, policy); err != nil {
+						portProtocol.endport, ipFamily); err != nil {
 						return err
 					}
 				}
@@ -323,7 +337,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 					comment := "rule to ACCEPT traffic from specified ipBlocks to dest pods selected by policy name: " +
 						policy.name + " namespace " + policy.namespace
 					if err := npc.appendRuleToPolicyChain(policyChainName, comment, srcIPBlockIPSetName, namedPortIPSetName,
-						endPoints.protocol, endPoints.port, endPoints.endport, ipFamily, policy); err != nil {
+						endPoints.protocol, endPoints.port, endPoints.endport, ipFamily); err != nil {
 						return err
 					}
 				}
@@ -332,7 +346,7 @@ func (npc *NetworkPolicyController) processIngressRules(policy networkPolicyInfo
 				comment := "rule to ACCEPT traffic from specified ipBlocks to dest pods selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, srcIPBlockIPSetName,
-					targetDestPodIPSetName, "", "", "", ipFamily, policy); err != nil {
+					targetDestPodIPSetName, "", "", "", ipFamily); err != nil {
 					return err
 				}
 			}
@@ -389,7 +403,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 					comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 						policy.name + " namespace " + policy.namespace
 					if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-						namedPortIPSetName, endPoints.protocol, endPoints.port, endPoints.endport, ipFamily, policy); err != nil {
+						namedPortIPSetName, endPoints.protocol, endPoints.port, endPoints.endport, ipFamily); err != nil {
 						return err
 					}
 				}
@@ -402,7 +416,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 				comment := "rule to ACCEPT traffic from source pods to dest pods selected by policy name " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-					dstPodIPSetName, "", "", "", ipFamily, policy); err != nil {
+					dstPodIPSetName, "", "", "", ipFamily); err != nil {
 					return err
 				}
 			}
@@ -415,7 +429,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 				comment := "rule to ACCEPT traffic from source pods to all destinations selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-					"", portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily, policy); err != nil {
+					"", portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily); err != nil {
 					return err
 				}
 			}
@@ -423,7 +437,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 				comment := "rule to ACCEPT traffic from source pods to all destinations selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-					"", portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily, policy); err != nil {
+					"", portProtocol.protocol, portProtocol.port, portProtocol.endport, ipFamily); err != nil {
 					return err
 				}
 			}
@@ -435,7 +449,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 			comment := "rule to ACCEPT traffic from source pods to all destinations selected by policy name: " +
 				policy.name + " namespace " + policy.namespace
 			if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-				"", "", "", "", ipFamily, policy); err != nil {
+				"", "", "", "", ipFamily); err != nil {
 				return err
 			}
 		}
@@ -450,7 +464,7 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 						policy.name + " namespace " + policy.namespace
 					if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
 						dstIPBlockIPSetName, portProtocol.protocol, portProtocol.port,
-						portProtocol.endport, ipFamily, policy); err != nil {
+						portProtocol.endport, ipFamily); err != nil {
 						return err
 					}
 				}
@@ -459,17 +473,18 @@ func (npc *NetworkPolicyController) processEgressRules(policy networkPolicyInfo,
 				comment := "rule to ACCEPT traffic from source pods to specified ipBlocks selected by policy name: " +
 					policy.name + " namespace " + policy.namespace
 				if err := npc.appendRuleToPolicyChain(policyChainName, comment, targetSourcePodIPSetName,
-					dstIPBlockIPSetName, "", "", "", ipFamily, policy); err != nil {
+					dstIPBlockIPSetName, "", "", "", ipFamily); err != nil {
 					return err
 				}
 			}
 		}
 	}
+
 	return nil
 }
 
 func (npc *NetworkPolicyController) appendRuleToPolicyChain(policyChainName, comment, srcIPSetName, dstIPSetName,
-	protocol, dPort, endDport string, ipFamily api.IPFamily, policy networkPolicyInfo) error {
+	protocol, dPort, endDport string, ipFamily api.IPFamily) error {
 
 	args := make([]string, 0)
 	args = append(args, "-A", policyChainName)
@@ -501,21 +516,6 @@ func (npc *NetworkPolicyController) appendRuleToPolicyChain(policyChainName, com
 
 	args = append(args, "-m", "mark", "--mark", "0x10000/0x10000", "-j", "RETURN", "\n")
 	npc.filterTableRules[ipFamily].WriteString(strings.Join(args, " "))
-
-	// Extra logs to get more information about the policy dropping the packet via ulog2
-	logRuleComment := "\"rule to log dropped traffic\""
-
-	// The network policy annotation can include a log config
-	limit, limitBurst := getIptablesNFlogLimit(policy.annotations)
-
-	// LogComment is capped at 64 characters and we are using 16, hence policyNamespace and policyName
-	// must fit in 48 characters otherwise we can only log the first 24 characters
-	policyNamespaceAndName := safeJoin(policy.namespace, policy.name)
-	logComment := "\"DROP by policy " + policyNamespaceAndName + "\""
-	logArgs := []string{"-A", policyChainName, "-m", "comment", "--comment", logRuleComment, "-m", "limit",
-		"--limit", limit, "--limit-burst", limitBurst, "-m", "mark", "!", "--mark", "0x10000/0x10000",
-		"-j", "NFLOG", "--nflog-group", "100", "--nflog-prefix", logComment, "\n"}
-	npc.filterTableRules[ipFamily].WriteString(strings.Join(logArgs, " "))
 
 	return nil
 }
