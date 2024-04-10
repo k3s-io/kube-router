@@ -227,6 +227,34 @@ func (npc *NetworkPolicyController) setupPodNetpolRules(pod podInfo, podFwChainN
 			filterTableRules.WriteString(strings.Join(args, " "))
 		}
 
+		if ipFamily == api.IPv6Protocol {
+			// Allow IPv6 traffic for L2 network communication needed in case Flannel is used as CNI
+			comment := "\"rule to permit the IPv6 Inverse Neighbor Discovery Advertisement \""
+			args := []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "142", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+			comment = "\"rule to permit the IPv6 Inverse Neighbor Discovery Solicitation \""
+			args = []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "141", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+			comment = "\"rule to permit the IPv6 neighbor-advertisement\""
+			args = []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "neighbor-advertisement", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+			comment = "\"rule to permit the IPv6 neighbor-solicitation\""
+			args = []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "neighbor-solicitation", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+			comment = "\"rule to permit the IPv6 router-advertisement\""
+			args = []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "router-advertisement", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+			comment = "\"rule to permit the IPv6 router-solicitation\""
+			args = []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
+				"-p", "icmpv6", "--icmpv6-type", "router-solicitation", "-m", "hl", "--hl-eq", "255", "-j", "ACCEPT", "\n"}
+			filterTableRules.WriteString(strings.Join(args, " "))
+		}
+
 		comment := "\"rule to permit the traffic traffic to pods when source is the pod's local node\""
 		args := []string{"-I", podFwChainName, "1", "-m", "comment", "--comment", comment,
 			"-m", "addrtype", "--src-type", "LOCAL", "-d", ip, "-j", "ACCEPT", "\n"}
