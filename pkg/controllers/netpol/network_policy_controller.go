@@ -227,6 +227,22 @@ func (npc *NetworkPolicyController) fullPolicySync() {
 	npc.mu.Lock()
 	defer npc.mu.Unlock()
 
+	for ipFamily := range npc.ipSetHandlers {
+		// Ensure that we start with clean handlers that don't contain previous save data
+		var err error
+		//nolint:exhaustive // we don't need a default condition here because we control this ourselves
+		switch ipFamily {
+		case v1core.IPv4Protocol:
+			npc.ipSetHandlers[ipFamily], err = utils.NewIPSet(false)
+		case v1core.IPv6Protocol:
+			npc.ipSetHandlers[ipFamily], err = utils.NewIPSet(true)
+		}
+		if err != nil {
+			klog.Errorf("failed to create ipset handler: %v", err)
+			return
+		}
+	}
+
 	healthcheck.SendHeartBeat(npc.healthChan, "NPC")
 	start := time.Now()
 	syncVersion := strconv.FormatInt(start.UnixNano(), syncVersionBase)
@@ -705,28 +721,16 @@ func (npc *NetworkPolicyController) cleanupStaleIPSets(activePolicyIPSets map[st
 		}()
 	}
 
-	for ipFamily, ipsets := range npc.ipSetHandlers {
+	for _, ipsets := range npc.ipSetHandlers {
 		cleanupPolicyIPSets := make([]*utils.Set, 0)
-
 		if err := ipsets.Save(); err != nil {
 			klog.Fatalf("failed to initialize ipsets command executor due to %s", err.Error())
 		}
-		if ipFamily == v1core.IPv6Protocol {
-			for _, set := range ipsets.Sets() {
-				if strings.HasPrefix(set.Name, fmt.Sprintf("%s:%s", utils.FamillyInet6, kubeSourceIPSetPrefix)) ||
-					strings.HasPrefix(set.Name, fmt.Sprintf("%s:%s", utils.FamillyInet6, kubeDestinationIPSetPrefix)) {
-					if _, ok := activePolicyIPSets[set.Name]; !ok {
-						cleanupPolicyIPSets = append(cleanupPolicyIPSets, set)
-					}
-				}
-			}
-		} else {
-			for _, set := range ipsets.Sets() {
-				if strings.HasPrefix(set.Name, kubeSourceIPSetPrefix) ||
-					strings.HasPrefix(set.Name, kubeDestinationIPSetPrefix) {
-					if _, ok := activePolicyIPSets[set.Name]; !ok {
-						cleanupPolicyIPSets = append(cleanupPolicyIPSets, set)
-					}
+		for _, set := range ipsets.Sets() {
+			if set.HasPrefix(kubeSourceIPSetPrefix) ||
+				set.HasPrefix(kubeDestinationIPSetPrefix) {
+				if _, ok := activePolicyIPSets[set.Name]; !ok {
+					cleanupPolicyIPSets = append(cleanupPolicyIPSets, set)
 				}
 			}
 		}
