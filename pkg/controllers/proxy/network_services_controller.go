@@ -1629,17 +1629,36 @@ func (nsc *NetworkServicesController) setupMangleTableRule(ip string, protocol s
 	}
 
 	// setup iptables rule TCPMSS for DSR mode to fix mtu problem
-	mtuArgs := []string{"-d", ip, "-m", tcpProtocol, "-p", tcpProtocol, "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS",
-		"--set-mss", strconv.Itoa(tcpMSS)}
-	err = iptablesCmdHandler.AppendUnique("mangle", "PREROUTING", mtuArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to run iptables command to set up TCPMSS due to %v", err)
+	// only reply packets from PODs are altered here
+	if protocol == tcpProtocol {
+		mtuArgs := []string{"-s", ip, "-m", tcpProtocol, "-p", tcpProtocol, "--sport", port, "-i", "kube-bridge",
+			"--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--set-mss", strconv.Itoa(tcpMSS)}
+		err = iptablesCmdHandler.AppendUnique("mangle", "PREROUTING", mtuArgs...)
+		if err != nil {
+			return fmt.Errorf("failed to run iptables command to set up TCPMSS due to %v", err)
+		}
 	}
-	mtuArgs[0] = "-s"
-	err = iptablesCmdHandler.AppendUnique("mangle", "POSTROUTING", mtuArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to run iptables command to set up TCPMSS due to %v", err)
+
+	// Previous versions of MTU args were this way, we will clean then up for the next couple of versions to ensure
+	// that old mangle table rules don't stick around
+	// TODO: remove after v2.4.X or above
+	for firstArg, chain := range map[string]string{"-s": "POSTROUTING", "-d": "PREROUTING"} {
+		prevMTUArgs := []string{firstArg, ip, "-m", tcpProtocol, "-p", tcpProtocol, "--tcp-flags", "SYN,RST", "SYN",
+			"-j", "TCPMSS", "--set-mss", strconv.Itoa(tcpMSS)}
+		klog.V(2).Infof("looking for mangle rule with: %s -t mangle %s", chain, prevMTUArgs)
+		exists, err := iptablesCmdHandler.Exists("mangle", chain, prevMTUArgs...)
+		if err != nil {
+			return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
+		}
+		if exists {
+			klog.V(2).Infof("removing mangle rule with: iptables -D %s -t mangle %s", chain, prevMTUArgs)
+			err = iptablesCmdHandler.Delete("mangle", chain, prevMTUArgs...)
+			if err != nil {
+				return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
+			}
+		}
 	}
+
 	return nil
 }
 
@@ -1678,29 +1697,20 @@ func (nsc *NetworkServicesController) cleanupMangleTableRule(ip string, protocol
 	}
 
 	// cleanup iptables rule TCPMSS
-	mtuArgs := []string{"-d", ip, "-m", tcpProtocol, "-p", tcpProtocol, "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS",
-		"--set-mss", strconv.Itoa(tcpMSS)}
-	exists, err = iptablesCmdHandler.Exists("mangle", "PREROUTING", mtuArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
-	}
-	if exists {
-		klog.V(2).Infof("removing mangle rule with: iptables -D PREROUTING -t mangle %s", args)
-		err = iptablesCmdHandler.Delete("mangle", "PREROUTING", mtuArgs...)
+	// only reply packets from PODs are altered here
+	if protocol == tcpProtocol {
+		mtuArgs := []string{"-s", ip, "-m", tcpProtocol, "-p", tcpProtocol, "--sport", port, "-i", "kube-bridge",
+			"--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--set-mss", strconv.Itoa(tcpMSS)}
+		exists, err = iptablesCmdHandler.Exists("mangle", "PREROUTING", mtuArgs...)
 		if err != nil {
 			return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
 		}
-	}
-	mtuArgs[0] = "-s"
-	exists, err = iptablesCmdHandler.Exists("mangle", "POSTROUTING", mtuArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
-	}
-	if exists {
-		klog.V(2).Infof("removing mangle rule with: iptables -D POSTROUTING -t mangle %s", args)
-		err = iptablesCmdHandler.Delete("mangle", "POSTROUTING", mtuArgs...)
-		if err != nil {
-			return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
+		if exists {
+			klog.V(2).Infof("removing mangle rule with: iptables -D PREROUTING -t mangle %s", args)
+			err = iptablesCmdHandler.Delete("mangle", "PREROUTING", mtuArgs...)
+			if err != nil {
+				return fmt.Errorf("failed to cleanup iptables command to set up TCPMSS due to %v", err)
+			}
 		}
 	}
 

@@ -2,7 +2,7 @@ ARG BUILDTIME_BASE=golang:1-alpine
 ARG RUNTIME_BASE=alpine:latest
 ARG TARGETPLATFORM
 ARG CNI_VERSION
-FROM ${BUILDTIME_BASE} as builder
+FROM ${BUILDTIME_BASE} AS builder
 ENV BUILD_IN_DOCKER=false
 
 WORKDIR /build
@@ -25,7 +25,7 @@ FROM ${RUNTIME_BASE}
 
 RUN apk add --no-cache \
       iptables \
-      iptables-legacy \
+      ip6tables \
       ipset \
       iproute2 \
       ipvsadm \
@@ -60,6 +60,10 @@ RUN if ! command -v iptables-nft > /dev/null; then \
     fi && \
     if ! command -v iptables-legacy > /dev/null; then \
         echo "ERROR: iptables-legacy is not installed" 1>&2; \
+        exit 1; \
+    fi && \
+    if ! command -v ip6tables > /dev/null; then \
+        echo "ERROR: ip6tables is not installed" 1>&2; \
         exit 1; \
     fi && \
     /iptables-wrapper-installer.sh --no-sanity-check
