@@ -198,9 +198,9 @@ func newFakeNode(name string, addrs []string) *v1.Node {
 
 // newUneventfulNetworkPolicyController returns new NetworkPolicyController object without any event handler
 func newUneventfulNetworkPolicyController(podInformer cache.SharedIndexInformer,
-	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer) *NetworkPolicyController {
+	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer) *NetworkPolicyControllerIptables {
 
-	npc := NetworkPolicyController{}
+	npc := NetworkPolicyControllerIptables{}
 	npc.syncPeriod = time.Hour
 
 	npc.iptablesCmdHandlers = make(map[v1.IPFamily]utils.IPTablesHandler)
@@ -958,7 +958,7 @@ func TestNetworkPolicyController(t *testing.T) {
 			ipSetHandlers := make(map[v1.IPFamily]utils.IPSetHandler, 1)
 			ipSetHandlers[v1.IPv4Protocol] = &fakeIPSet{}
 			_, err := NewNetworkPolicyController(client, test.config, podInformer, netpolInformer, nsInformer,
-				&sync.Mutex{}, fakeLinkQuerier, iptablesHandlers, ipSetHandlers)
+				&sync.Mutex{}, fakeLinkQuerier, false)
 			if err == nil && test.expectError {
 				t.Error("This config should have failed, but it was successful instead")
 			} else if err != nil {

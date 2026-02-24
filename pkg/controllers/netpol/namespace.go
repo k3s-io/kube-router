@@ -8,7 +8,7 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func (npc *NetworkPolicyController) newNamespaceEventHandler() cache.ResourceEventHandler {
+func (npc *NetworkPolicyControllerIptables) newNamespaceEventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			npc.handleNamespaceAdd(obj.(*api.Namespace))
@@ -33,7 +33,7 @@ func (npc *NetworkPolicyController) newNamespaceEventHandler() cache.ResourceEve
 	}
 }
 
-func (npc *NetworkPolicyController) handleNamespaceAdd(obj *api.Namespace) {
+func (npc *NetworkPolicyControllerIptables) handleNamespaceAdd(obj *api.Namespace) {
 	if obj.Labels == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (npc *NetworkPolicyController) handleNamespaceAdd(obj *api.Namespace) {
 	npc.RequestFullSync()
 }
 
-func (npc *NetworkPolicyController) handleNamespaceUpdate(oldObj, newObj *api.Namespace) {
+func (npc *NetworkPolicyControllerIptables) handleNamespaceUpdate(oldObj, newObj *api.Namespace) {
 	if reflect.DeepEqual(oldObj.Labels, newObj.Labels) {
 		return
 	}
@@ -51,7 +51,7 @@ func (npc *NetworkPolicyController) handleNamespaceUpdate(oldObj, newObj *api.Na
 	npc.RequestFullSync()
 }
 
-func (npc *NetworkPolicyController) handleNamespaceDelete(obj *api.Namespace) {
+func (npc *NetworkPolicyControllerIptables) handleNamespaceDelete(obj *api.Namespace) {
 	if obj.Labels == nil {
 		return
 	}

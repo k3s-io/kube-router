@@ -81,7 +81,8 @@ func NewKubeRouterDefault(config *options.KubeRouterConfig) (*KubeRouter, error)
 
 // CleanupConfigAndExit performs Cleanup on all three controllers
 func CleanupConfigAndExit() {
-	npc := netpol.NetworkPolicyController{}
+	//TODO_TF: handle nftables cleanup here as well when we add support for it in network policy controller
+	npc := netpol.NetworkPolicyControllerIptables{}
 	npc.Cleanup()
 
 	nsc := proxy.NetworkServicesController{}
@@ -241,25 +242,21 @@ func (kr *KubeRouter) Run() error {
 	}
 
 	if kr.Config.RunFirewall {
-		iptablesCmdHandlers, ipSetHandlers, err := netpol.NewIPTablesHandlers(kr.Config)
-		if err != nil {
-			return fmt.Errorf("failed to create iptables handlers: %v", err)
-		}
 		npc, err := netpol.NewNetworkPolicyController(kr.Client,
-			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, iptablesCmdHandlers, ipSetHandlers)
+			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, false)
 		if err != nil {
 			return fmt.Errorf("failed to create network policy controller: %v", err)
 		}
 
-		_, err = podInformer.AddEventHandler(npc.PodEventHandler)
+		_, err = podInformer.AddEventHandler(npc.PodEventHandler())
 		if err != nil {
 			return fmt.Errorf("failed to add PodEventHandler: %v", err)
 		}
-		_, err = nsInformer.AddEventHandler(npc.NamespaceEventHandler)
+		_, err = nsInformer.AddEventHandler(npc.NamespaceEventHandler())
 		if err != nil {
 			return fmt.Errorf("failed to add NamespaceEventHandler: %v", err)
 		}
-		_, err = npInformer.AddEventHandler(npc.NetworkPolicyEventHandler)
+		_, err = npInformer.AddEventHandler(npc.NetworkPolicyEventHandler())
 		if err != nil {
 			return fmt.Errorf("failed to add NetworkPolicyEventHandler: %v", err)
 		}

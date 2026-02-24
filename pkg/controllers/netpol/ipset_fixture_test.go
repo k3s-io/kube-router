@@ -67,14 +67,7 @@ func TestNetworkPolicyFixtureIPSets(t *testing.T) {
 		nsInformer,
 		&sync.Mutex{},
 		linkQ,
-		map[v1.IPFamily]utils.IPTablesHandler{
-			v1.IPv4Protocol: &fakeIPTables{},
-			v1.IPv6Protocol: &fakeIPTables{},
-		},
-		map[v1.IPFamily]utils.IPSetHandler{
-			v1.IPv4Protocol: ipv4Handler,
-			v1.IPv6Protocol: ipv6Handler,
-		},
+		false,
 	)
 	require.NoError(t, err)
 
