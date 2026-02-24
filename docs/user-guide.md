@@ -133,6 +133,7 @@ Usage of kube-router:
       --service-tcp-timeout duration                  Specify TCP timeout for IPVS services in standard duration syntax (e.g. '5s', '1m'), default 0s preserves default system value (default: 0s)
       --service-tcpfin-timeout duration               Specify TCP FIN timeout for IPVS services in standard duration syntax (e.g. '5s', '1m'), default 0s preserves default system value (default: 0s)
       --service-udp-timeout duration                  Specify UDP timeout for IPVS services in standard duration syntax (e.g. '5s', '1m'), default 0s preserves default system value (default: 0s)
+      --use-nftables-for-netpol                       Use nftables instead of iptables for the network policy controller. Requires nft >= 1.0.1 and kernel nftables support.
   -v, --v string                                      log level for V logs (default "0")
   -V, --version                                       Print version information.
 ```
