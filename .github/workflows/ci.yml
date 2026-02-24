@@ -3,6 +3,7 @@ name: continuous-integration
 on:
   push:
     branches:
+    - refactor-iptables
     - master
     - v[1-9].*
     - prep-v[1-9].*
