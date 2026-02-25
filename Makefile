@@ -98,6 +98,15 @@ else
 	go test -v -timeout 30s github.com/cloudnativelabs/kube-router/v2/cmd/kube-router/ github.com/cloudnativelabs/kube-router/v2/...
 endif
 
+test-netpol:
+	$(DOCKER) run -v $(PWD):/go/src/github.com/cloudnativelabs/kube-router \
+		-v $(GO_CACHE):/root/.cache/go-build \
+		-v $(GO_MOD_CACHE):/go/pkg/mod \
+		-w /go/src/github.com/cloudnativelabs/kube-router $(DOCKER_BUILD_IMAGE) \
+		sh -c \
+		'CGO_ENABLED=0 go test -v -timeout 30s  github.com/cloudnativelabs/kube-router/v2/pkg/controllers/netpol/...'
+
+
 test-pretty: gofmt ## Runs code quality pipelines (gofmt, tests, coverage, etc)
 ifeq "$(BUILD_IN_DOCKER)" "true"
 	$(DOCKER) run -v $(PWD):/go/src/github.com/cloudnativelabs/kube-router \
@@ -265,7 +274,7 @@ help:
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: clean container run release goreleaser push gofmt gofmt-fix gomoqs
-.PHONY: test test-pretty lint docker-login push-manifest push-manifest-release
+.PHONY: test test-pretty test-netpol lint docker-login push-manifest push-manifest-release
 .PHONY: push-release github-release help multiarch-binverify markdownlint
 
 .DEFAULT: all
