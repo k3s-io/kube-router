@@ -39,14 +39,14 @@ func (npc *NetworkPolicyControllerIptables) newNetworkPolicyEventHandler() cache
 }
 
 // OnNetworkPolicyUpdate handles updates to network policy from the kubernetes api server
-func (npc *NetworkPolicyControllerIptables) OnNetworkPolicyUpdate(obj interface{}) {
+func (npc *NetworkPolicyControllerBase) OnNetworkPolicyUpdate(obj interface{}) {
 	netpol := obj.(*networking.NetworkPolicy)
 	klog.V(2).Infof("Received update for network policy: %s/%s", netpol.Namespace, netpol.Name)
 
 	npc.RequestFullSync()
 }
 
-func (npc *NetworkPolicyControllerIptables) handleNetworkPolicyDelete(obj interface{}) {
+func (npc *NetworkPolicyControllerBase) handleNetworkPolicyDelete(obj interface{}) {
 	netpol, ok := obj.(*networking.NetworkPolicy)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)

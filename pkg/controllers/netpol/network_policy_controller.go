@@ -1,6 +1,7 @@
 package netpol
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"sync"
@@ -78,12 +79,14 @@ type NetworkPolicyControllerBase struct {
 	serviceExternalIPRanges     []net.IPNet
 	serviceLoadBalancerIPRanges []net.IPNet
 	serviceNodePortRange        string
-	mu                          sync.Mutex
-	syncPeriod                  time.Duration
-	MetricsEnabled              bool
-	healthChan                  chan<- *healthcheck.ControllerHeartbeat
-	fullSyncRequestChan         chan struct{}
-	ipsetMutex                  *sync.Mutex
+	filterTableRules            map[v1core.IPFamily]*bytes.Buffer
+
+	mu                  sync.Mutex
+	syncPeriod          time.Duration
+	MetricsEnabled      bool
+	healthChan          chan<- *healthcheck.ControllerHeartbeat
+	fullSyncRequestChan chan struct{}
+	ipsetMutex          *sync.Mutex
 
 	podLister cache.Indexer
 	npLister  cache.Indexer

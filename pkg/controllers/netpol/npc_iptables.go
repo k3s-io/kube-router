@@ -28,7 +28,6 @@ type NetworkPolicyControllerIptables struct {
 
 	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler
 	iptablesSaveRestore map[v1core.IPFamily]utils.IPTablesSaveRestorer
-	filterTableRules    map[v1core.IPFamily]*bytes.Buffer
 	ipSetHandlers       map[v1core.IPFamily]utils.IPSetHandler
 }
 
