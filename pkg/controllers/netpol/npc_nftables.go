@@ -14,11 +14,21 @@ import (
 	"sigs.k8s.io/knftables"
 )
 
+const (
+	ipv4Table = "kube-router-filter-ipv4"
+	ipv6Table = "kube-router-filter-ipv6"
+)
+
+var chainToHook = map[string]knftables.BaseChainHook{
+	"INPUT":   knftables.InputHook,
+	"OUTPUT":  knftables.OutputHook,
+	"FORWARD": knftables.ForwardHook,
+}
+
 type NetworkPolicyControllerNftables struct {
 	*NetworkPolicyControllerBase
 
-	nftv4 knftables.Interface
-	nftv6 knftables.Interface
+	knftInterfaces map[v1core.IPFamily]knftables.Interface
 }
 
 // create a new table and returns the interface to interact with it
@@ -39,6 +49,32 @@ func initTable(ctx context.Context, ipFamily knftables.Family, name string) (knf
 	return nft, nil
 }
 
+func (npc *NetworkPolicyControllerNftables) ensureTopLevelChains() {
+	ctx := context.Background() //TODO_TF: use a context with timeout here
+	klog.V(2).Infof("Creating top level input chains")
+
+	for _, nft := range npc.knftInterfaces {
+		tx := nft.NewTransaction()
+
+		for chain, hook := range chainToHook {
+			tx.Add(&knftables.Chain{
+				Name:     chain,
+				Comment:  knftables.PtrTo("top level " + chain + " chain for kube-router"),
+				Type:     knftables.PtrTo(knftables.FilterType),
+				Hook:     knftables.PtrTo(hook),
+				Priority: knftables.PtrTo(knftables.FilterPriority),
+			})
+			tx.Flush(&knftables.Chain{
+				Name: chain,
+			})
+		}
+		err := nft.Run(ctx, tx)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't setup top level input chains")
+		}
+	}
+}
+
 func NewNetworkPolicyControllerNftables(
 	npcBase *NetworkPolicyControllerBase, clientset kubernetes.Interface,
 	config *options.KubeRouterConfig, podInformer cache.SharedIndexInformer,
@@ -51,6 +87,13 @@ func NewNetworkPolicyControllerNftables(
 			return nil, fmt.Errorf("IPv4 was enabled but no IPv4 address was found on node")
 		}
 		klog.V(2).Infof("IPv4 is enabled")
+		var err error
+		ctx := context.Background() //TODO_TF: use a context with timeout here
+		npc.knftInterfaces = make(map[v1core.IPFamily]knftables.Interface, 2)
+		npc.knftInterfaces[v1core.IPv4Protocol], err = initTable(ctx, knftables.IPv4Family, ipv4Table)
+		if err != nil {
+			return nil, err
+		}
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv4Protocol] = &buf
 	}
@@ -59,6 +102,12 @@ func NewNetworkPolicyControllerNftables(
 			return nil, fmt.Errorf("IPv6 was enabled but no IPv6 address was found on node")
 		}
 		klog.V(2).Infof("IPv6 is enabled")
+		var err error
+		ctx := context.Background() //TODO_TF: use a context with timeout here
+		npc.knftInterfaces[v1core.IPv6Protocol], err = initTable(ctx, knftables.IPv6Family, ipv6Table)
+		if err != nil {
+			return nil, err
+		}
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv6Protocol] = &buf
 	}
