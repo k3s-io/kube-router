@@ -32,6 +32,64 @@ type NetworkPolicyControllerIptables struct {
 	ipSetHandlers       map[v1core.IPFamily]utils.IPSetHandler
 }
 
+// Run runs forever till we receive notification on stopCh
+func (npc *NetworkPolicyControllerIptables) Run(healthChan chan<- *healthcheck.ControllerHeartbeat, stopCh <-chan struct{},
+	wg *sync.WaitGroup) {
+	t := time.NewTicker(npc.syncPeriod)
+	defer t.Stop()
+	defer wg.Done()
+
+	klog.Info("Starting network policy controller")
+	npc.healthChan = healthChan
+
+	// setup kube-router specific top level custom chains (KUBE-ROUTER-INPUT, KUBE-ROUTER-FORWARD, KUBE-ROUTER-OUTPUT)
+	npc.ensureTopLevelChains()
+
+	// setup default network policy chain that is applied to traffic from/to the pods that does not match any network
+	// policy
+	npc.ensureDefaultNetworkPolicyChain()
+
+	// setup common network policy chain that is applied to all bi-directional traffic
+	npc.ensureCommonPolicyChain()
+
+	// Full syncs of the network policy controller take a lot of time and can only be processed one at a time,
+	// therefore, we start it in it's own goroutine and request a sync through a single item channel
+	klog.Info("Starting network policy controller full sync goroutine")
+	wg.Add(1)
+	go func(fullSyncRequest <-chan struct{}, stopCh <-chan struct{}, wg *sync.WaitGroup) {
+		defer wg.Done()
+		for {
+			// Add an additional non-blocking select to ensure that if the stopCh channel is closed it is handled first
+			select {
+			case <-stopCh:
+				klog.Info("Shutting down network policies full sync goroutine")
+				return
+			default:
+			}
+			select {
+			case <-stopCh:
+				klog.Info("Shutting down network policies full sync goroutine")
+				return
+			case <-fullSyncRequest:
+				klog.V(3).Info("Received request for a full sync, processing")
+				npc.fullPolicySync() // fullPolicySync() is a blocking request here
+			}
+		}
+	}(npc.fullSyncRequestChan, stopCh, wg)
+
+	// loop forever till notified to stop on stopCh
+	for {
+		klog.V(1).Info("Requesting periodic sync of iptables to reflect network policies")
+		npc.RequestFullSync()
+		select {
+		case <-stopCh:
+			klog.Infof("Shutting down network policies controller")
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // Sync synchronizes iptables to desired state of network policies
 func (npc *NetworkPolicyControllerIptables) fullPolicySync() {
 
