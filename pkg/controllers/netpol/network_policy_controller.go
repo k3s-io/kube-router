@@ -241,15 +241,13 @@ func NewNetworkPolicyController(clientset kubernetes.Interface,
 	config *options.KubeRouterConfig, podInformer cache.SharedIndexInformer,
 	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer,
 	ipsetMutex *sync.Mutex, linkQ utils.LocalLinkQuerier,
+	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler,
+	ipSetHandlers map[v1core.IPFamily]utils.IPSetHandler,
 	useNftables bool,
 ) (NetworkPolicyController, error) {
 	if useNftables {
 		return nil, fmt.Errorf("nftables is not currently supported for network policy controller")
 	} else {
-		iptablesCmdHandlers, ipSetHandlers, err := NewIPTablesHandlers(config)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create iptables handlers: %v", err)
-		}
 		return NewNetworkPolicyControllerIptables(clientset, config, podInformer, npInformer, nsInformer, ipsetMutex, linkQ, iptablesCmdHandlers, ipSetHandlers)
 	}
 }

@@ -242,8 +242,12 @@ func (kr *KubeRouter) Run() error {
 	}
 
 	if kr.Config.RunFirewall {
+		iptablesCmdHandlers, ipSetHandlers, err := netpol.NewIPTablesHandlers(kr.Config)
+		if err != nil {
+			return fmt.Errorf("failed to create iptables handlers: %v", err)
+		}
 		npc, err := netpol.NewNetworkPolicyController(kr.Client,
-			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, false)
+			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, iptablesCmdHandlers, ipSetHandlers, false)
 		if err != nil {
 			return fmt.Errorf("failed to create network policy controller: %v", err)
 		}
