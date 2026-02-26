@@ -22,7 +22,7 @@ import (
 	netutils "k8s.io/utils/net"
 )
 
-func (npc *NetworkPolicyControllerIptables) newNetworkPolicyEventHandler() cache.ResourceEventHandler {
+func (npc *NetworkPolicyControllerBase) newNetworkPolicyEventHandler() cache.ResourceEventHandler {
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			npc.OnNetworkPolicyUpdate(obj)

@@ -200,7 +200,7 @@ func newFakeNode(name string, addrs []string) *v1.Node {
 func newUneventfulNetworkPolicyController(podInformer cache.SharedIndexInformer,
 	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer) *NetworkPolicyControllerIptables {
 
-	npc := NetworkPolicyControllerIptables{}
+	npc := NetworkPolicyControllerIptables{NetworkPolicyControllerBase: &NetworkPolicyControllerBase{}}
 	npc.syncPeriod = time.Hour
 
 	npc.iptablesCmdHandlers = make(map[v1.IPFamily]utils.IPTablesHandler)

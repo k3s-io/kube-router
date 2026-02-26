@@ -24,7 +24,7 @@ import (
 )
 
 type NetworkPolicyControllerIptables struct {
-	NetworkPolicyControllerBase
+	*NetworkPolicyControllerBase
 
 	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler
 	iptablesSaveRestore map[v1core.IPFamily]utils.IPTablesSaveRestorer
@@ -755,125 +755,18 @@ func NewIPTablesHandlers(config *options.KubeRouterConfig) (
 }
 
 // NewNetworkPolicyControllerIptables returns new NetworkPolicyControllerIptables object
-func NewNetworkPolicyControllerIptables(clientset kubernetes.Interface,
+func NewNetworkPolicyControllerIptables(
+	npcBase *NetworkPolicyControllerBase, clientset kubernetes.Interface,
 	config *options.KubeRouterConfig, podInformer cache.SharedIndexInformer,
 	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer,
-	ipsetMutex *sync.Mutex, linkQ utils.LocalLinkQuerier,
+	linkQ utils.LocalLinkQuerier,
 	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler,
 	ipSetHandlers map[v1core.IPFamily]utils.IPSetHandler) (*NetworkPolicyControllerIptables, error) {
-	npc := NetworkPolicyControllerIptables{NetworkPolicyControllerBase: NetworkPolicyControllerBase{ipsetMutex: ipsetMutex}}
 
-	// Creating a single-item buffered channel to ensure that we only keep a single full sync request at a time,
-	// additional requests would be pointless to queue since after the first one was processed the system would already
-	// be up to date with all of the policy changes from any enqueued request after that
-	npc.fullSyncRequestChan = make(chan struct{}, 1)
-
-	// Validate and parse ClusterIP service range
-	if len(config.ClusterIPCIDRs) == 0 {
-		return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter, the list is empty")
-	}
-
-	_, primaryIpnet, err := net.ParseCIDR(strings.TrimSpace(config.ClusterIPCIDRs[0]))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter: %w", err)
-	}
-	npc.serviceClusterIPRanges = append(npc.serviceClusterIPRanges, *primaryIpnet)
-
-	// Validate that ClusterIP service range type matches the configuration
-	if config.EnableIPv4 && !config.EnableIPv6 {
-		if !netutils.IsIPv4CIDR(&npc.serviceClusterIPRanges[0]) {
-			return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter: " +
-				"IPv4 is enabled but only IPv6 address is provided")
-		}
-	}
-	if !config.EnableIPv4 && config.EnableIPv6 {
-		if !netutils.IsIPv6CIDR(&npc.serviceClusterIPRanges[0]) {
-			return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter: " +
-				"IPv6 is enabled but only IPv4 address is provided")
-		}
-	}
-
-	if len(config.ClusterIPCIDRs) > 1 {
-		if config.EnableIPv4 && config.EnableIPv6 {
-			_, secondaryIpnet, err := net.ParseCIDR(strings.TrimSpace(config.ClusterIPCIDRs[1]))
-			if err != nil {
-				return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter: %v", err)
-			}
-			npc.serviceClusterIPRanges = append(npc.serviceClusterIPRanges, *secondaryIpnet)
-
-			ipv4Provided := netutils.IsIPv4CIDR(&npc.serviceClusterIPRanges[0]) ||
-				netutils.IsIPv4CIDR(&npc.serviceClusterIPRanges[1])
-			ipv6Provided := netutils.IsIPv6CIDR(&npc.serviceClusterIPRanges[0]) ||
-				netutils.IsIPv6CIDR(&npc.serviceClusterIPRanges[1])
-			if !ipv4Provided || !ipv6Provided {
-				return nil, fmt.Errorf("failed to get parse --service-cluster-ip-range parameter: " +
-					"dual-stack is enabled, both IPv4 and IPv6 addresses should be provided")
-			}
-		} else {
-			return nil, fmt.Errorf("too many CIDRs provided in --service-cluster-ip-range parameter: " +
-				"dual-stack must be enabled to provide two addresses")
-		}
-	}
-	if len(config.ClusterIPCIDRs) > 2 {
-		return nil, fmt.Errorf("too many CIDRs provided in --service-cluster-ip-range parameter, only two " +
-			"addresses are allowed at once for dual-stack")
-	}
-
-	// Validate and parse NodePort range
-	if npc.serviceNodePortRange, err = validateNodePortRange(config.NodePortRange); err != nil {
-		return nil, err
-	}
-
-	// Validate and parse ExternalIP service range
-	for _, externalIPRange := range config.ExternalIPCIDRs {
-		_, ipnet, err := net.ParseCIDR(externalIPRange)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get parse --service-external-ip-range parameter: '%s'. Error: %s",
-				externalIPRange, err.Error())
-		}
-		npc.serviceExternalIPRanges = append(npc.serviceExternalIPRanges, *ipnet)
-	}
-
-	// Validate and parse LoadBalancerIP service range
-	for _, loadBalancerIPRange := range config.LoadBalancerCIDRs {
-		_, ipnet, err := net.ParseCIDR(loadBalancerIPRange)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get parse --loadbalancer-ip-range parameter: '%s'. Error: %s",
-				loadBalancerIPRange, err.Error())
-		}
-		npc.serviceLoadBalancerIPRanges = append(npc.serviceLoadBalancerIPRanges, *ipnet)
-	}
-
-	if config.MetricsEnabled {
-		// Register the metrics for this controller
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesSyncTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesV4SaveTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesV6SaveTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesV4RestoreTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerIptablesV6RestoreTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyChainsSyncTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyIpsetV4RestoreTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyIpsetV6RestoreTime)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyChains)
-		metrics.DefaultRegisterer.MustRegister(metrics.ControllerPolicyIpsets)
-		npc.MetricsEnabled = true
-	}
-
-	npc.syncPeriod = config.IPTablesSyncPeriod
-
-	node, err := utils.GetNodeObject(clientset, config.HostnameOverride)
-	if err != nil {
-		return nil, err
-	}
-
-	npc.krNode, err = utils.NewKRNode(node, linkQ, config.EnableIPv4, config.EnableIPv6)
-	if err != nil {
-		return nil, err
-	}
+	npc := NetworkPolicyControllerIptables{NetworkPolicyControllerBase: npcBase}
 
 	npc.iptablesCmdHandlers = iptablesCmdHandlers
 	npc.iptablesSaveRestore = make(map[v1core.IPFamily]utils.IPTablesSaveRestorer, 2)
-	npc.filterTableRules = make(map[v1core.IPFamily]*bytes.Buffer, 2)
 	npc.ipSetHandlers = ipSetHandlers
 
 	if config.EnableIPv4 {
@@ -894,15 +787,6 @@ func NewNetworkPolicyControllerIptables(clientset kubernetes.Interface,
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv6Protocol] = &buf
 	}
-
-	npc.podLister = podInformer.GetIndexer()
-	npc.podEventHandler = npc.newPodEventHandler()
-
-	npc.nsLister = nsInformer.GetIndexer()
-	npc.namespaceEventHandler = npc.newNamespaceEventHandler()
-
-	npc.npLister = npInformer.GetIndexer()
-	npc.networkPolicyEventHandler = npc.newNetworkPolicyEventHandler()
 
 	return &npc, nil
 }
