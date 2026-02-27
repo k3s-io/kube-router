@@ -14,6 +14,7 @@ import (
 	"github.com/cloudnativelabs/kube-router/v2/pkg/utils"
 	"k8s.io/klog/v2"
 	netutils "k8s.io/utils/net"
+	"sigs.k8s.io/knftables"
 
 	v1core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -191,6 +192,7 @@ func NewNetworkPolicyController(clientset kubernetes.Interface,
 	ipsetMutex *sync.Mutex, linkQ utils.LocalLinkQuerier,
 	iptablesCmdHandlers map[v1core.IPFamily]utils.IPTablesHandler,
 	ipSetHandlers map[v1core.IPFamily]utils.IPSetHandler,
+	knftInterfaces map[v1core.IPFamily]knftables.Interface,
 	useNftables bool,
 ) (NetworkPolicyController, error) {
 	npcBase := NetworkPolicyControllerBase{ipsetMutex: ipsetMutex}

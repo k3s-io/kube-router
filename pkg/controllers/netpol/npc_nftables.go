@@ -31,6 +31,24 @@ type NetworkPolicyControllerNftables struct {
 	knftInterfaces map[v1core.IPFamily]knftables.Interface
 }
 
+func NewKnftablesInterfaces(ctx context.Context, config *options.KubeRouterConfig) (map[v1core.IPFamily]knftables.Interface, error) {
+	nftInterfaces := make(map[v1core.IPFamily]knftables.Interface, 2)
+	var err error
+	if config.EnableIPv4 {
+		nftInterfaces[v1core.IPv4Protocol], err = initTable(ctx, knftables.IPv4Family, ipv4Table)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if config.EnableIPv6 {
+		nftInterfaces[v1core.IPv6Protocol], err = initTable(ctx, knftables.IPv6Family, ipv6Table)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nftInterfaces, nil
+}
+
 // create a new table and returns the interface to interact with it
 func initTable(ctx context.Context, ipFamily knftables.Family, name string) (knftables.Interface, error) {
 	nft, err := knftables.New(ipFamily, name)
@@ -114,21 +132,23 @@ func NewNetworkPolicyControllerNftables(
 	npcBase *NetworkPolicyControllerBase, clientset kubernetes.Interface,
 	config *options.KubeRouterConfig, podInformer cache.SharedIndexInformer,
 	npInformer cache.SharedIndexInformer, nsInformer cache.SharedIndexInformer,
-	linkQ utils.LocalLinkQuerier) (*NetworkPolicyControllerNftables, error) {
+	linkQ utils.LocalLinkQuerier,
+	knftInterfaces map[v1core.IPFamily]knftables.Interface) (*NetworkPolicyControllerNftables, error) {
 
-	npc := NetworkPolicyControllerNftables{NetworkPolicyControllerBase: npcBase}
+	npc := NetworkPolicyControllerNftables{NetworkPolicyControllerBase: npcBase, knftInterfaces: knftInterfaces}
+
 	if config.EnableIPv4 {
 		if !npc.krNode.IsIPv4Capable() {
 			return nil, fmt.Errorf("IPv4 was enabled but no IPv4 address was found on node")
 		}
 		klog.V(2).Infof("IPv4 is enabled")
-		var err error
-		ctx := context.Background() //TODO_TF: use a context with timeout here
-		npc.knftInterfaces = make(map[v1core.IPFamily]knftables.Interface, 2)
-		npc.knftInterfaces[v1core.IPv4Protocol], err = initTable(ctx, knftables.IPv4Family, ipv4Table)
-		if err != nil {
-			return nil, err
-		}
+		// var err error
+		// ctx := context.Background() //TODO_TF: use a context with timeout here
+		// npc.knftInterfaces = make(map[v1core.IPFamily]knftables.Interface, 2)
+		// npc.knftInterfaces[v1core.IPv4Protocol], err = initTable(ctx, knftables.IPv4Family, ipv4Table)
+		// if err != nil {
+		// 	return nil, err
+		// }
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv4Protocol] = &buf
 	}
@@ -137,12 +157,12 @@ func NewNetworkPolicyControllerNftables(
 			return nil, fmt.Errorf("IPv6 was enabled but no IPv6 address was found on node")
 		}
 		klog.V(2).Infof("IPv6 is enabled")
-		var err error
-		ctx := context.Background() //TODO_TF: use a context with timeout here
-		npc.knftInterfaces[v1core.IPv6Protocol], err = initTable(ctx, knftables.IPv6Family, ipv6Table)
-		if err != nil {
-			return nil, err
-		}
+		// var err error
+		// ctx := context.Background() //TODO_TF: use a context with timeout here
+		// npc.knftInterfaces[v1core.IPv6Protocol], err = initTable(ctx, knftables.IPv6Family, ipv6Table)
+		// if err != nil {
+		// 	return nil, err
+		// }
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv6Protocol] = &buf
 	}

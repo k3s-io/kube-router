@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -246,8 +247,14 @@ func (kr *KubeRouter) Run() error {
 		if err != nil {
 			return fmt.Errorf("failed to create iptables handlers: %v", err)
 		}
+		//TODO_TF: use context with timeout
+		knftablesInterfaces, err := netpol.NewKnftablesInterfaces(context.TODO(), kr.Config)
+		if err != nil {
+			return fmt.Errorf("failed to create nftables interfaces: %v", err)
+		}
+		//TODO_TF: inject true when nftables is configured
 		npc, err := netpol.NewNetworkPolicyController(kr.Client,
-			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, iptablesCmdHandlers, ipSetHandlers, false)
+			kr.Config, podInformer, npInformer, nsInformer, &ipsetMutex, nil, iptablesCmdHandlers, ipSetHandlers, knftablesInterfaces, false)
 		if err != nil {
 			return fmt.Errorf("failed to create network policy controller: %v", err)
 		}
