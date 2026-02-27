@@ -116,8 +116,7 @@ func (npc *NetworkPolicyControllerNftables) ensureDefaultNetworkPolicyChain() {
 		tx.Add(&knftables.Rule{
 			Chain: kubeDefaultNetpolChain,
 			Rule: knftables.Concat(
-				"meta mark", "0x1000",
-				"return",
+				"meta mark", "set mark", "or", "0x1000",
 			),
 		})
 		err := nft.Run(ctx, tx)
