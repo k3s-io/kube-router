@@ -77,7 +77,7 @@ func TestXxx(t *testing.T) {
 
 	krNetPol.ensureTopLevelChains()
 	krNetPol.ensureDefaultNetworkPolicyChain()
-
+	krNetPol.ensureCommonPolicyChain()
 	fakeIPv4Itf, ok := krNetPol.knftInterfaces[v1.IPv4Protocol].(*knftables.Fake)
 	if !ok {
 		t.Fatalf("Expected knftInterfaces[v1.IPv4Protocol] to be of type *knftables.Fake")
@@ -99,10 +99,30 @@ func TestXxx(t *testing.T) {
 		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT { comment \"KUBE-NWPLCY-DEFAULT chain for kube-router\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT meta mark set mark or 0x1000") {
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT counter meta mark set mark or 0x1000") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-
+		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON { comment \"KUBE-NWPLCY-COMMON chain for kube-router\" ; }") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON ct state invalid counter drop") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON ct state invalid counter drop") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON ct state established,related counter") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON icmp type echo-request counter accept") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON icmp type destination-unreachable counter accept") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON icmp type time-exceeded counter accept") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
 	}
 
 }

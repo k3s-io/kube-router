@@ -100,7 +100,7 @@ func (npc *NetworkPolicyControllerNftables) ensureTopLevelChains() {
 // NOTE: This chain is only targeted by unidirectional network traffic selectors.
 func (npc *NetworkPolicyControllerNftables) ensureDefaultNetworkPolicyChain() {
 	ctx := context.Background() //TODO_TF: use a context with timeout here
-	klog.V(2).Infof("Creating default network policy chains")
+	klog.V(2).Infof("Creating default network policy chain")
 
 	for _, nft := range npc.knftInterfaces {
 		tx := nft.NewTransaction()
@@ -116,12 +116,67 @@ func (npc *NetworkPolicyControllerNftables) ensureDefaultNetworkPolicyChain() {
 		tx.Add(&knftables.Rule{
 			Chain: kubeDefaultNetpolChain,
 			Rule: knftables.Concat(
-				"meta mark", "set mark", "or", "0x1000",
+				"counter", "meta mark", "set mark", "or", "0x1000",
 			),
+			Comment: knftables.PtrTo("rule to mark traffic matching a network policy"),
 		})
 		err := nft.Run(ctx, tx)
 		if err != nil {
 			klog.V(2).ErrorS(err, "nftables: couldn't setup chain %s", kubeDefaultNetpolChain)
+			continue
+		}
+	}
+}
+
+func (npc *NetworkPolicyControllerNftables) ensureCommonPolicyChain() {
+	ctx := context.Background() //TODO_TF: use a context with timeout here
+	klog.V(2).Infof("Creating common policy chains")
+
+	for family, nft := range npc.knftInterfaces {
+		tx := nft.NewTransaction()
+		tx.Add(&knftables.Chain{
+			Name:    kubeCommonNetpolChain,
+			Comment: knftables.PtrTo(kubeCommonNetpolChain + " chain for kube-router"),
+		})
+		tx.Flush(&knftables.Chain{
+			Name: kubeCommonNetpolChain,
+		})
+		// ensure statefull firewall drops INVALID state traffic from/to the pod
+		// For full context see: https://bugzilla.netfilter.org/show_bug.cgi?id=693
+		// The NAT engine ignores any packet with state INVALID, because there's no reliable way to determine what kind of
+		// NAT should be performed. So the proper way to prevent the leakage is to drop INVALID packets.
+		// In the future, if we ever allow services or nodes to disable conntrack checking, we may need to make this
+		// conditional so that non-tracked traffic doesn't get dropped as invalid.
+		tx.Add(&knftables.Rule{
+			Chain: kubeCommonNetpolChain,
+			Rule: knftables.Concat(
+				"ct state invalid", "counter", "drop",
+			),
+			Comment: knftables.PtrTo("rule to drop invalid state for pod"),
+		})
+		// ensure statefull firewall that permits RELATED,ESTABLISHED traffic from/to the pod
+		tx.Add(&knftables.Rule{
+			Chain: kubeCommonNetpolChain,
+			Rule: knftables.Concat(
+				"ct state established,related", "counter", "accept",
+			),
+			Comment: knftables.PtrTo("rule for stateful firewall for pod"),
+		})
+
+		icmpRules := utils.CommonICMPRules(family)
+		for _, icmpRule := range icmpRules {
+			tx.Add(&knftables.Rule{
+				Chain: kubeCommonNetpolChain,
+				Rule: knftables.Concat(
+					icmpRule.IPTablesProto,
+					"type", icmpRule.ICMPType,
+					"counter", "accept"),
+				Comment: knftables.PtrTo("allow icmp " + icmpRule.ICMPType + " messages"),
+			})
+		}
+		err := nft.Run(ctx, tx)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't setup chain %s", kubeCommonNetpolChain)
 			continue
 		}
 	}
