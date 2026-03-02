@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/cloudnativelabs/kube-router/v2/pkg/options"
 	"github.com/cloudnativelabs/kube-router/v2/pkg/utils"
@@ -11,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	netutils "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 )
 
@@ -20,9 +22,9 @@ const (
 )
 
 var chainToHook = map[string]knftables.BaseChainHook{
-	"INPUT":   knftables.InputHook,
-	"OUTPUT":  knftables.OutputHook,
-	"FORWARD": knftables.ForwardHook,
+	kubeInputChainName:   knftables.InputHook,
+	kubeOutputChainName:  knftables.OutputHook,
+	kubeForwardChainName: knftables.ForwardHook,
 }
 
 type NetworkPolicyControllerNftables struct {
@@ -67,6 +69,17 @@ func initTable(ctx context.Context, ipFamily knftables.Family, name string) (knf
 	return nft, nil
 }
 
+func (npc *NetworkPolicyControllerNftables) kNftInterfaceForCIDR(cidr *net.IPNet) (knftables.Interface, error) {
+	if netutils.IsIPv4CIDR(cidr) {
+		return npc.knftInterfaces[v1core.IPv4Protocol], nil
+	}
+	if netutils.IsIPv6CIDR(cidr) {
+		return npc.knftInterfaces[v1core.IPv6Protocol], nil
+	}
+
+	return nil, fmt.Errorf("invalid CIDR")
+}
+
 func (npc *NetworkPolicyControllerNftables) ensureTopLevelChains() {
 	ctx := context.Background() //TODO_TF: use a context with timeout here
 	klog.V(2).Infof("Creating top level input chains")
@@ -89,6 +102,126 @@ func (npc *NetworkPolicyControllerNftables) ensureTopLevelChains() {
 		err := nft.Run(ctx, tx)
 		if err != nil {
 			klog.V(2).ErrorS(err, "nftables: couldn't setup top level input chains")
+		}
+	}
+
+	//traffic towards service CIDRs should be allowed to ingress regardless of any network policy, so add rules for that in the top level chains
+	if len(npc.serviceClusterIPRanges) > 0 {
+		for _, serviceRange := range npc.serviceClusterIPRanges {
+			var family v1core.IPFamily
+			if serviceRange.IP.To4() != nil {
+				family = v1core.IPv4Protocol
+			} else {
+				family = v1core.IPv6Protocol
+			}
+			klog.V(2).Infof("Allow traffic to ingress towards Cluster IP Range: %s for family: %s",
+				serviceRange.String(), family)
+			nftItf, err := npc.kNftInterfaceForCIDR(&serviceRange)
+			if err != nil {
+				klog.V(2).ErrorS(err, "nftables: couldn't get interface for CIDR", "cidr", serviceRange.String())
+				continue
+			}
+			tx := nftItf.NewTransaction()
+			tx.Add(&knftables.Rule{
+				Chain: kubeInputChainName,
+				Rule: knftables.Concat(
+					"ip daddr", serviceRange.String(),
+					"counter", "return",
+				),
+				Comment: knftables.PtrTo("allow traffic to primary/secondary cluster IP range"),
+			})
+			err = nftItf.Run(ctx, tx)
+			if err != nil {
+				klog.V(2).ErrorS(err, "nftables: couldn't setup chain for cluster IP range", "cidr", serviceRange.String())
+				continue
+			}
+		}
+	} else {
+		klog.Fatalf("Primary service cluster IP range is not configured")
+	}
+
+	for family, nft := range npc.knftInterfaces {
+		tx := nft.NewTransaction()
+
+		for _, protocol := range []string{"tcp", "udp"} {
+			tx.Add(&knftables.Rule{
+				Chain: kubeInputChainName,
+				Rule: knftables.Concat(
+					"ip",
+					"protocol", protocol,
+					"fib", "daddr", "type", "local", protocol,
+					"dport", npc.serviceNodePortRange,
+					"counter", "return",
+				),
+				Comment: knftables.PtrTo("allow LOCAL " + protocol + " traffic to node ports"),
+			})
+			klog.V(2).Infof("Allow %s traffic to ingress towards node port range: %s for family: %s",
+				protocol, npc.serviceNodePortRange, family)
+		}
+		err := nft.Run(ctx, tx)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: failed to add rules for node port range")
+			continue
+		}
+	}
+
+	for _, externalIPRange := range npc.serviceExternalIPRanges {
+		var family v1core.IPFamily
+		if externalIPRange.IP.To4() != nil {
+			family = v1core.IPv4Protocol
+		} else {
+			family = v1core.IPv6Protocol
+		}
+		klog.V(2).Infof("Allow traffic to ingress towards External IP Range: %s for family: %s",
+			externalIPRange.String(), family)
+		nftItf, err := npc.kNftInterfaceForCIDR(&externalIPRange)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't get interface for CIDR", "cidr", externalIPRange.String())
+			continue
+		}
+		tx := nftItf.NewTransaction()
+		tx.Add(&knftables.Rule{
+			Chain: kubeInputChainName,
+			Rule: knftables.Concat(
+				"ip daddr", externalIPRange.String(),
+				"counter", "return",
+			),
+			Comment: knftables.PtrTo("allow traffic to External IP range"),
+		})
+		err = nftItf.Run(ctx, tx)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't setup chain for External IP range", "cidr", externalIPRange.String())
+			continue
+		}
+	}
+
+	for _, loadBalancerIPRange := range npc.serviceLoadBalancerIPRanges {
+		var family v1core.IPFamily
+		if loadBalancerIPRange.IP.To4() != nil {
+			family = v1core.IPv4Protocol
+		} else {
+			family = v1core.IPv6Protocol
+		}
+		klog.V(2).Infof("Allow traffic to ingress towards LoadBalancer IP Range: %s for family: %s",
+			loadBalancerIPRange.String(), family)
+		nftItf, err := npc.kNftInterfaceForCIDR(&loadBalancerIPRange)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't get interface for CIDR", "cidr", loadBalancerIPRange.String())
+			continue
+		}
+		tx := nftItf.NewTransaction()
+		tx.Add(&knftables.Rule{
+			Chain: kubeInputChainName,
+			Rule: knftables.Concat(
+				"ip daddr", loadBalancerIPRange.String(),
+				"counter", "return",
+			),
+			Comment: knftables.PtrTo("allow traffic to LoadBalancer IP range"),
+		})
+		err = nftItf.Run(ctx, tx)
+		if err != nil {
+			klog.V(2).ErrorS(err, "nftables: couldn't setup chain for LoadBalancer IP range", "cidr", loadBalancerIPRange.String())
+			continue
 		}
 	}
 }

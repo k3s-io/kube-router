@@ -50,7 +50,9 @@ func newUneventfulNfTablesNPC(podInformer cache.SharedIndexInformer,
 		NodeIPv4Addrs: map[v1.NodeAddressType][]net.IP{v1.NodeInternalIP: {net.IPv4(10, 10, 10, 10)}},
 	}
 	npc.krNode = &krNode
-
+	npc.serviceClusterIPRanges = []net.IPNet{{IP: net.IPv4(10, 43, 0, 0), Mask: net.CIDRMask(16, 32)}}
+	npc.serviceNodePortRange = "30000-32767"
+	npc.serviceExternalIPRanges = []net.IPNet{{IP: net.IPv4(10, 44, 0, 0), Mask: net.CIDRMask(16, 32)}}
 	npc.podLister = podInformer.GetIndexer()
 	npc.nsLister = nsInformer.GetIndexer()
 	npc.npLister = npInformer.GetIndexer()
@@ -87,13 +89,25 @@ func TestXxx(t *testing.T) {
 		if !strings.Contains(ipv4Dump, "add table ip kube-router-filter-ipv4 { comment \"rules for kube-router-filter-ipv4\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 FORWARD { type filter hook forward priority 0 ; comment \"top level FORWARD chain for kube-router\" ; }") {
+		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-ROUTER-FORWARD { type filter hook forward priority 0 ; comment \"top level KUBE-ROUTER-FORWARD chain for kube-router\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 INPUT { type filter hook input priority 0 ; comment \"top level INPUT chain for kube-router\" ; }") {
+		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-ROUTER-INPUT { type filter hook input priority 0 ; comment \"top level KUBE-ROUTER-INPUT chain for kube-router\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 OUTPUT { type filter hook output priority 0 ; comment \"top level OUTPUT chain for kube-router\" ; }") {
+		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-ROUTER-OUTPUT { type filter hook output priority 0 ; comment \"top level KUBE-ROUTER-OUTPUT chain for kube-router\" ; }") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-ROUTER-INPUT ip daddr 10.43.0.0/16 counter return") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-ROUTER-INPUT ip protocol tcp fib daddr type local tcp dport 30000-32767 counter return") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-ROUTER-INPUT ip protocol udp fib daddr type local udp dport 30000-32767 counter return") {
+			t.Errorf("Expected nftables rules not found in dump")
+		}
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-ROUTER-INPUT ip daddr 10.44.0.0/16 counter return") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
 		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT { comment \"KUBE-NWPLCY-DEFAULT chain for kube-router\" ; }") {
