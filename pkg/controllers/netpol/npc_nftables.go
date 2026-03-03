@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudnativelabs/kube-router/v2/pkg/healthcheck"
 	"github.com/cloudnativelabs/kube-router/v2/pkg/metrics"
 	"github.com/cloudnativelabs/kube-router/v2/pkg/options"
 	"github.com/cloudnativelabs/kube-router/v2/pkg/utils"
@@ -73,6 +74,46 @@ func initTable(ctx context.Context, ipFamily knftables.Family, name string) (knf
 		return nil, fmt.Errorf("nftables: couldn't initialise table %s: %v", name, err)
 	}
 	return nft, nil
+}
+
+func (npc *NetworkPolicyControllerNftables) fullPolicySync() {
+	npc.mu.Lock()
+	defer npc.mu.Unlock()
+
+	healthcheck.SendHeartBeat(npc.healthChan, healthcheck.NetworkPolicyController)
+	start := time.Now()
+	syncVersion := strconv.FormatInt(start.UnixNano(), syncVersionBase)
+	defer func() {
+		endTime := time.Since(start)
+		if npc.MetricsEnabled {
+			metrics.ControllerIptablesSyncTime.Observe(endTime.Seconds())
+		}
+		klog.V(1).Infof("sync nftables took %v", endTime)
+	}()
+
+	klog.V(1).Infof("Starting sync of nftables with version: %s", syncVersion)
+
+	// ensure kube-router specific top level chains and corresponding rules exist
+	npc.ensureTopLevelChains()
+
+	// ensure default network policy chain that is applied to traffic from/to the pods that does not match any network
+	// policy
+	npc.ensureDefaultNetworkPolicyChain()
+
+	// ensure common network policy chain that is applied to all bi-directional traffic
+	npc.ensureCommonPolicyChain()
+
+	networkPoliciesInfo, err := npc.buildNetworkPoliciesInfo()
+	if err != nil {
+		klog.Errorf("Aborting sync. Failed to build network policies: %v", err.Error())
+		return
+	}
+
+	_, _, err = npc.syncNetworkPolicyChains(networkPoliciesInfo, syncVersion)
+	if err != nil {
+		klog.Errorf("Aborting sync. Failed to sync network policy chains: %v", err.Error())
+		return
+	}
 }
 
 func (npc *NetworkPolicyControllerNftables) kNftInterfaceForCIDR(cidr *net.IPNet) (knftables.Interface, error) {

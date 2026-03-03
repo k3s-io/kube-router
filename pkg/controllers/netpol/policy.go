@@ -505,11 +505,11 @@ func (npc *NetworkPolicyControllerIptables) appendRuleToPolicyChain(policyChainN
 	return nil
 }
 
-func (npc *NetworkPolicyControllerIptables) buildNetworkPoliciesInfo() ([]networkPolicyInfo, error) {
+func (npc *NetworkPolicyControllerBase) buildNetworkPoliciesInfo() ([]networkPolicyInfo, error) {
 
 	NetworkPolicies := make([]networkPolicyInfo, 0)
-	_, isIPv4Enabled := npc.ipSetHandlers[api.IPv4Protocol]
-	_, isIPv6Enabled := npc.ipSetHandlers[api.IPv6Protocol]
+	_, isIPv4Enabled := npc.filterTableRules[api.IPv4Protocol]
+	_, isIPv6Enabled := npc.filterTableRules[api.IPv6Protocol]
 
 	for _, policyObj := range npc.npLister.List() {
 
@@ -713,7 +713,7 @@ func (npc *NetworkPolicyControllerIptables) buildNetworkPoliciesInfo() ([]networ
 	return NetworkPolicies, nil
 }
 
-func (npc *NetworkPolicyControllerIptables) evalPodPeer(policy *networking.NetworkPolicy,
+func (npc *NetworkPolicyControllerBase) evalPodPeer(policy *networking.NetworkPolicy,
 	peer networking.NetworkPolicyPeer) ([]*api.Pod, error) {
 
 	var matchingPods []*api.Pod
@@ -746,7 +746,7 @@ func (npc *NetworkPolicyControllerIptables) evalPodPeer(policy *networking.Netwo
 	return matchingPods, err
 }
 
-func (npc *NetworkPolicyControllerIptables) processNetworkPolicyPorts(npPorts []networking.NetworkPolicyPort,
+func (npc *NetworkPolicyControllerBase) processNetworkPolicyPorts(npPorts []networking.NetworkPolicyPort,
 	namedPort2eps namedPort2eps) (numericPorts []protocolAndPort, namedPorts []endPoints) {
 	numericPorts, namedPorts = make([]protocolAndPort, 0), make([]endPoints, 0)
 	for _, npPort := range npPorts {
@@ -776,7 +776,7 @@ func (npc *NetworkPolicyControllerIptables) processNetworkPolicyPorts(npPorts []
 	return
 }
 
-func (npc *NetworkPolicyControllerIptables) ListPodsByNamespaceAndLabels(namespace string,
+func (npc *NetworkPolicyControllerBase) ListPodsByNamespaceAndLabels(namespace string,
 	podSelector labels.Selector) (ret []*api.Pod, err error) {
 	podLister := listers.NewPodLister(npc.podLister)
 	allMatchedNameSpacePods, err := podLister.Pods(namespace).List(podSelector)
@@ -786,7 +786,7 @@ func (npc *NetworkPolicyControllerIptables) ListPodsByNamespaceAndLabels(namespa
 	return allMatchedNameSpacePods, nil
 }
 
-func (npc *NetworkPolicyControllerIptables) ListNamespaceByLabels(namespaceSelector labels.Selector) ([]*api.Namespace, error) {
+func (npc *NetworkPolicyControllerBase) ListNamespaceByLabels(namespaceSelector labels.Selector) ([]*api.Namespace, error) {
 	namespaceLister := listers.NewNamespaceLister(npc.nsLister)
 	matchedNamespaces, err := namespaceLister.List(namespaceSelector)
 	if err != nil {
@@ -795,7 +795,7 @@ func (npc *NetworkPolicyControllerIptables) ListNamespaceByLabels(namespaceSelec
 	return matchedNamespaces, nil
 }
 
-func (npc *NetworkPolicyControllerIptables) evalIPBlockPeer(peer networking.NetworkPolicyPeer) map[api.IPFamily][][]string {
+func (npc *NetworkPolicyControllerBase) evalIPBlockPeer(peer networking.NetworkPolicyPeer) map[api.IPFamily][][]string {
 	ipBlock := make(map[api.IPFamily][][]string, 0)
 	if peer.PodSelector == nil && peer.NamespaceSelector == nil && peer.IPBlock != nil {
 		cidr := peer.IPBlock.CIDR
@@ -860,7 +860,7 @@ func (npc *NetworkPolicyControllerIptables) evalIPBlockPeer(peer networking.Netw
 	return ipBlock
 }
 
-func (npc *NetworkPolicyControllerIptables) grabNamedPortFromPod(pod *api.Pod, namedPort2eps *namedPort2eps) {
+func (npc *NetworkPolicyControllerBase) grabNamedPortFromPod(pod *api.Pod, namedPort2eps *namedPort2eps) {
 	if pod == nil || namedPort2eps == nil {
 		return
 	}
