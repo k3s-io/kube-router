@@ -950,29 +950,35 @@ func TestNetworkPolicyController(t *testing.T) {
 	fakeLinkQuerier := utils.NewFakeLocalLinkQuerier(fakeNodeIPs, nil)
 	client := fake.NewSimpleClientset(&v1.NodeList{Items: []v1.Node{*newFakeNode("node", fakeNodeIPs)}})
 	_, podInformer, nsInformer, netpolInformer := newFakeInformersFromClient(client)
-	for _, test := range testCases {
-		t.Run(test.name, func(t *testing.T) {
-			// TODO: Handle IPv6
-			iptablesHandlers := make(map[v1.IPFamily]utils.IPTablesHandler, 1)
-			iptablesHandlers[v1.IPv4Protocol] = newFakeIPTables(iptables.ProtocolIPv4)
-			ipSetHandlers := make(map[v1.IPFamily]utils.IPSetHandler, 1)
-			ipSetHandlers[v1.IPv4Protocol] = &fakeIPSet{}
-			_, err := NewNetworkPolicyController(client, test.config, podInformer, netpolInformer, nsInformer,
-				&sync.Mutex{}, fakeLinkQuerier, iptablesHandlers, ipSetHandlers, nil, false)
-			if err == nil && test.expectError {
-				t.Error("This config should have failed, but it was successful instead")
-			} else if err != nil {
-				// Unfortunately without doing a ton of extra refactoring work, we can't remove this reference easily
-				// from the controllers start up. Luckily it's one of the last items to be processed in the controller
-				// so for now we'll consider that if we hit this error that we essentially didn't hit an error at all
-				// TODO: refactor NPC to use an injectable interface for ipset operations
-				if !test.expectError && err.Error() != "Ipset utility not found" {
-					t.Errorf("This config should have been successful, but it failed instead. Error: %s", err)
-				} else if test.expectError && err.Error() != test.errorText {
-					t.Errorf("Expected error: '%s' but instead got: '%s'", test.errorText, err)
-				}
+	for _, useNfTables := range []bool{false, true} {
+		for _, test := range testCases {
+			testName := test.name
+			if useNfTables {
+				testName = fmt.Sprintf("%s_nft", test.name)
 			}
-		})
+			t.Run(testName, func(t *testing.T) {
+				// TODO: Handle IPv6
+				iptablesHandlers := make(map[v1.IPFamily]utils.IPTablesHandler, 1)
+				iptablesHandlers[v1.IPv4Protocol] = newFakeIPTables(iptables.ProtocolIPv4)
+				ipSetHandlers := make(map[v1.IPFamily]utils.IPSetHandler, 1)
+				ipSetHandlers[v1.IPv4Protocol] = &fakeIPSet{}
+				_, err := NewNetworkPolicyController(client, test.config, podInformer, netpolInformer, nsInformer,
+					&sync.Mutex{}, fakeLinkQuerier, iptablesHandlers, ipSetHandlers, nil, useNfTables)
+				if err == nil && test.expectError {
+					t.Error("This config should have failed, but it was successful instead")
+				} else if err != nil {
+					// Unfortunately without doing a ton of extra refactoring work, we can't remove this reference easily
+					// from the controllers start up. Luckily it's one of the last items to be processed in the controller
+					// so for now we'll consider that if we hit this error that we essentially didn't hit an error at all
+					// TODO: refactor NPC to use an injectable interface for ipset operations
+					if !test.expectError && err.Error() != "Ipset utility not found" {
+						t.Errorf("This config should have been successful, but it failed instead. Error: %s", err)
+					} else if test.expectError && err.Error() != test.errorText {
+						t.Errorf("Expected error: '%s' but instead got: '%s'", test.errorText, err)
+					}
+				}
+			})
+		}
 	}
 }
 
