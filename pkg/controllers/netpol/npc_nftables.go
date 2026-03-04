@@ -884,6 +884,7 @@ func (npc *NetworkPolicyControllerNftables) syncNetworkPolicyChains(
 	activePolicyIPSets := make(map[string]bool)
 
 	defer func() {
+		//TODO_TF: use relevant metrics for nftables implementation here instead of iptables ones
 		if npc.MetricsEnabled {
 			metrics.ControllerPolicyChains.Set(float64(len(activePolicyChains)))
 			metrics.ControllerPolicyIpsets.Set(float64(len(activePolicyIPSets)))

@@ -312,7 +312,7 @@ func NewNetworkPolicyController(clientset kubernetes.Interface,
 	npcBase.networkPolicyEventHandler = npcBase.newNetworkPolicyEventHandler()
 
 	if useNftables {
-		return nil, fmt.Errorf("nftables is not currently supported for network policy controller")
+		return NewNetworkPolicyControllerNftables(&npcBase, clientset, config, podInformer, npInformer, nsInformer, linkQ, knftInterfaces)
 	} else {
 		return NewNetworkPolicyControllerIptables(&npcBase, clientset, config, podInformer, npInformer, nsInformer, linkQ, iptablesCmdHandlers, ipSetHandlers)
 	}
