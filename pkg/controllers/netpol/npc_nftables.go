@@ -435,13 +435,6 @@ func NewNetworkPolicyControllerNftables(
 			return nil, fmt.Errorf("IPv4 was enabled but no IPv4 address was found on node")
 		}
 		klog.V(2).Infof("IPv4 is enabled")
-		// var err error
-		// ctx := context.Background() //TODO_TF: use a context with timeout here
-		// npc.knftInterfaces = make(map[v1core.IPFamily]knftables.Interface, 2)
-		// npc.knftInterfaces[v1core.IPv4Protocol], err = initTable(ctx, knftables.IPv4Family, ipv4Table)
-		// if err != nil {
-		// 	return nil, err
-		// }
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv4Protocol] = &buf
 	}
@@ -450,12 +443,6 @@ func NewNetworkPolicyControllerNftables(
 			return nil, fmt.Errorf("IPv6 was enabled but no IPv6 address was found on node")
 		}
 		klog.V(2).Infof("IPv6 is enabled")
-		// var err error
-		// ctx := context.Background() //TODO_TF: use a context with timeout here
-		// npc.knftInterfaces[v1core.IPv6Protocol], err = initTable(ctx, knftables.IPv6Family, ipv6Table)
-		// if err != nil {
-		// 	return nil, err
-		// }
 		var buf bytes.Buffer
 		npc.filterTableRules[v1core.IPv6Protocol] = &buf
 	}

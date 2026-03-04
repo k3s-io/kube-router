@@ -60,7 +60,7 @@ func newUneventfulNfTablesNPC(podInformer cache.SharedIndexInformer,
 	return &npc
 }
 
-func TestXxx(t *testing.T) {
+func TestBasicChains(t *testing.T) {
 	client := fake.NewSimpleClientset(&v1.NodeList{Items: []v1.Node{*newFakeNode("node", []string{"10.10.10.10"})}})
 	informerFactory, podInformer, nsInformer, netpolInformer := newFakeInformersFromClient(client)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -69,13 +69,6 @@ func TestXxx(t *testing.T) {
 	cache.WaitForCacheSync(ctx.Done(), podInformer.HasSynced)
 	krNetPol := newUneventfulNfTablesNPC(podInformer, netpolInformer, nsInformer)
 	tCreateFakePods(t, podInformer, nsInformer)
-	// for _, test := range testCases {
-	// 	test.netpol.createFakeNetpol(t, netpolInformer)
-	// }
-	// netpols, err := krNetPol.buildNetworkPoliciesInfo()
-	// if err != nil {
-	// 	t.Errorf("Problems building policies")
-	// }
 
 	krNetPol.ensureTopLevelChains()
 	krNetPol.ensureDefaultNetworkPolicyChain()
@@ -85,7 +78,6 @@ func TestXxx(t *testing.T) {
 		t.Fatalf("Expected knftInterfaces[v1.IPv4Protocol] to be of type *knftables.Fake")
 	} else {
 		ipv4Dump := fakeIPv4Itf.Dump()
-		t.Logf("Dumped rules:\n%s", ipv4Dump)
 		if !strings.Contains(ipv4Dump, "add table ip kube-router-filter-ipv4 { comment \"rules for kube-router-filter-ipv4\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-iptables/iptables"
+	"sigs.k8s.io/knftables"
 
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -962,8 +963,10 @@ func TestNetworkPolicyController(t *testing.T) {
 				iptablesHandlers[v1.IPv4Protocol] = newFakeIPTables(iptables.ProtocolIPv4)
 				ipSetHandlers := make(map[v1.IPFamily]utils.IPSetHandler, 1)
 				ipSetHandlers[v1.IPv4Protocol] = &fakeIPSet{}
+				knftInterfaces := make(map[v1.IPFamily]knftables.Interface, 1)
+				knftInterfaces[v1.IPv4Protocol] = &knftables.Fake{}
 				_, err := NewNetworkPolicyController(client, test.config, podInformer, netpolInformer, nsInformer,
-					&sync.Mutex{}, fakeLinkQuerier, iptablesHandlers, ipSetHandlers, nil, useNfTables)
+					&sync.Mutex{}, fakeLinkQuerier, iptablesHandlers, ipSetHandlers, knftInterfaces, useNfTables)
 				if err == nil && test.expectError {
 					t.Error("This config should have failed, but it was successful instead")
 				} else if err != nil {
