@@ -423,5 +423,5 @@ func TestFullPolicySync(t *testing.T) {
 	t.Logf("nftables dump: \n%s", ipv6Dump)
 
 	require.NoError(t, err)
-
+	// TODO_TF: add assertions to verify the expected rules are present in the dumps
 }
