@@ -173,6 +173,13 @@ func (npc *NetworkPolicyControllerNftables) fullPolicySync() {
 		klog.Errorf("Aborting sync. Failed to sync network policy chains: %v", err.Error())
 		return
 	}
+
+	activePodFwChains := npc.syncPodFirewallChains(networkPoliciesInfo, syncVersion)
+	klog.V(3).Infof("Active pod firewall chains: %d", len(activePodFwChains))
+
+	// Makes sure that the ACCEPT rules for packets marked with "0x20000" are added to the end of each of kube-router's
+	// top level chains
+	npc.ensureExplicitAccept()
 }
 
 func (npc *NetworkPolicyControllerNftables) kNftInterfaceForCIDR(cidr *net.IPNet) (knftables.Interface, error) {
@@ -987,4 +994,218 @@ func (npc *NetworkPolicyControllerNftables) syncNetworkPolicyChains(
 
 	klog.V(2).Infof("nftables chains are synchronized with the network policies.")
 	return activePolicyChains, activePolicyIPSets, nil
+}
+
+// syncPodFirewallChains is the nftables equivalent of the iptables syncPodFirewallChains.
+// For each local pod it creates a per-pod nftables chain that enforces network policies, then
+// adds jump rules into the top-level chains so that all traffic to/from the pod flows through it.
+// It returns the set of active pod firewall chain names for the caller to use during garbage collection.
+func (npc *NetworkPolicyControllerNftables) syncPodFirewallChains(
+	networkPoliciesInfo []networkPolicyInfo, version string) map[string]bool {
+
+	ctx := context.Background()
+	activePodFwChains := make(map[string]bool)
+
+	// Collect all local pods across all node IPs.
+	allLocalPods := make(map[string]podInfo)
+	for _, nodeIP := range npc.krNode.GetNodeIPAddrs() {
+		npc.getLocalPods(allLocalPods, nodeIP.String())
+	}
+
+	for _, pod := range allLocalPods {
+		podFwChainName := podFirewallChainName(pod.namespace, pod.name, version)
+		activePodFwChains[podFwChainName] = true
+
+		for ipFamily, nft := range npc.knftInterfaces {
+			ip, err := getPodIPForFamily(pod, ipFamily)
+			if err != nil {
+				klog.Infof("unable to get address for pod: %s -- skipping pod chain for pod "+
+					"(this is normal for pods that are not dual-stack)", err.Error())
+				continue
+			}
+
+			addrKeyword := "ip"
+			if ipFamily == v1core.IPv6Protocol {
+				addrKeyword = "ip6"
+			}
+
+			tx := nft.NewTransaction()
+
+			// Create (or reset) the per-pod firewall chain.
+			tx.Add(&knftables.Chain{
+				Name:    podFwChainName,
+				Comment: knftables.PtrTo("pod firewall chain for " + pod.namespace + "/" + pod.name),
+			})
+			tx.Flush(&knftables.Chain{Name: podFwChainName})
+
+			// 1. Jump to the common policy chain (stateful INVALID drop, RELATED/ESTABLISHED accept, ICMP).
+			tx.Add(&knftables.Rule{
+				Chain:   podFwChainName,
+				Rule:    knftables.Concat("counter jump", kubeCommonNetpolChain),
+				Comment: knftables.PtrTo("common bi-directional traffic policy rules"),
+			})
+
+			// 2. Allow traffic whose source is the local node itself.
+			tx.Add(&knftables.Rule{
+				Chain: podFwChainName,
+				Rule: knftables.Concat(
+					"fib saddr type local", addrKeyword, "daddr", ip,
+					"counter accept",
+				),
+				Comment: knftables.PtrTo("rule to permit traffic to pods when source is the pod's local node"),
+			})
+
+			// 3. Jump to every applicable network-policy chain; track whether ingress/egress is covered.
+			hasIngressPolicy := false
+			hasEgressPolicy := false
+			for _, policy := range networkPoliciesInfo {
+				if _, ok := policy.targetPods[pod.ip]; !ok {
+					continue
+				}
+				policyChainName := networkPolicyChainName(policy.namespace, policy.name, version, ipFamily)
+				comment := "run through nw policy " + policy.name
+				switch policy.policyType {
+				case kubeBothPolicyType:
+					hasIngressPolicy = true
+					hasEgressPolicy = true
+					tx.Add(&knftables.Rule{
+						Chain:   podFwChainName,
+						Rule:    knftables.Concat("counter jump", policyChainName),
+						Comment: knftables.PtrTo(comment),
+					})
+				case kubeIngressPolicyType:
+					hasIngressPolicy = true
+					tx.Add(&knftables.Rule{
+						Chain:   podFwChainName,
+						Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", policyChainName),
+						Comment: knftables.PtrTo(comment),
+					})
+				case kubeEgressPolicyType:
+					hasEgressPolicy = true
+					tx.Add(&knftables.Rule{
+						Chain:   podFwChainName,
+						Rule:    knftables.Concat(addrKeyword, "saddr", ip, "counter jump", policyChainName),
+						Comment: knftables.PtrTo(comment),
+					})
+				}
+			}
+
+			// 4. Fall back to the default netpol chain for directions not covered by a specific policy.
+			if !hasIngressPolicy {
+				tx.Add(&knftables.Rule{
+					Chain:   podFwChainName,
+					Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", kubeDefaultNetpolChain),
+					Comment: knftables.PtrTo("run through default ingress network policy chain"),
+				})
+			}
+			if !hasEgressPolicy {
+				tx.Add(&knftables.Rule{
+					Chain:   podFwChainName,
+					Rule:    knftables.Concat(addrKeyword, "saddr", ip, "counter jump", kubeDefaultNetpolChain),
+					Comment: knftables.PtrTo("run through default egress network policy chain"),
+				})
+			}
+
+			// 5. Log then reject traffic not approved by any policy (bit 0x10000 still clear).
+			tx.Add(&knftables.Rule{
+				Chain:   podFwChainName,
+				Rule:    "meta mark and 0x10000 == 0x0 limit rate 10/minute burst 10 packets log group 100",
+				Comment: knftables.PtrTo("rule to log dropped traffic POD name:" + pod.name + " namespace: " + pod.namespace),
+			})
+			tx.Add(&knftables.Rule{
+				Chain:   podFwChainName,
+				Rule:    "meta mark and 0x10000 == 0x0 counter reject",
+				Comment: knftables.PtrTo("rule to REJECT traffic destined for POD name:" + pod.name + " namespace: " + pod.namespace),
+			})
+
+			// 6. Clear bit 0x10000 so subsequent chains start with a clean slate.
+			tx.Add(&knftables.Rule{
+				Chain:   podFwChainName,
+				Rule:    "counter meta mark set meta mark and 0xfffeffff",
+				Comment: knftables.PtrTo("reset mark to let traffic pass through rest of the chains"),
+			})
+
+			// 7. Set bit 0x20000 to signal to the top-level ACCEPT rule that policy was satisfied.
+			tx.Add(&knftables.Rule{
+				Chain:   podFwChainName,
+				Rule:    "counter meta mark set meta mark or 0x20000",
+				Comment: knftables.PtrTo("set mark to ACCEPT traffic that comply to network policies"),
+			})
+
+			// ---- intercept inbound traffic (destination == pod IP) ----
+			podFwComment := "rule to jump traffic destined to POD name:" + pod.name +
+				" namespace: " + pod.namespace + " to chain " + podFwChainName
+			// Routed traffic arriving via FORWARD.
+			tx.Add(&knftables.Rule{
+				Chain:   kubeForwardChainName,
+				Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", podFwChainName),
+				Comment: knftables.PtrTo(podFwComment),
+			})
+			// Traffic returned via OUTPUT (e.g. service-proxy hairpin).
+			tx.Add(&knftables.Rule{
+				Chain:   kubeOutputChainName,
+				Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", podFwChainName),
+				Comment: knftables.PtrTo(podFwComment),
+			})
+
+			// ---- intercept outbound traffic (source == pod IP) ----
+			outboundComment := "rule to jump traffic from POD name:" + pod.name +
+				" namespace: " + pod.namespace + " to chain " + podFwChainName
+			for _, chain := range defaultChains {
+				tx.Add(&knftables.Rule{
+					Chain:   chain,
+					Rule:    knftables.Concat(addrKeyword, "saddr", ip, "counter jump", podFwChainName),
+					Comment: knftables.PtrTo(outboundComment),
+				})
+			}
+
+			if err := nft.Run(ctx, tx); err != nil {
+				klog.Errorf("nftables: failed to sync pod firewall chain for pod %s/%s family %s: %v",
+					pod.namespace, pod.name, ipFamily, err)
+			}
+		}
+	}
+
+	// Garbage-collect stale pod firewall chains across both IP family tables.
+	for _, nft := range npc.knftInterfaces {
+		existingChains, err := nft.List(ctx, "chains")
+		if err != nil {
+			klog.Warningf("nftables: could not list chains for pod fw cleanup: %v", err)
+			continue
+		}
+		tx := nft.NewTransaction()
+		anyDeletions := false
+		for _, chain := range existingChains {
+			if strings.HasPrefix(chain, kubePodFirewallChainPrefix) && !activePodFwChains[chain] {
+				tx.Delete(&knftables.Chain{Name: chain})
+				anyDeletions = true
+			}
+		}
+		if anyDeletions {
+			if err := nft.Run(ctx, tx); err != nil {
+				klog.Warningf("nftables: failed to cleanup stale pod fw chains: %v", err)
+			}
+		}
+	}
+
+	return activePodFwChains
+}
+
+func (npc *NetworkPolicyControllerNftables) ensureExplicitAccept() {
+	ctx := context.Background() //TODO_TF: use a context with timeout here
+	// for the traffic to/from the local pod's let network policy controller be
+	// authoritative entity to ACCEPT the traffic if it complies to network policies
+	for _, nft := range npc.knftInterfaces {
+		tx := nft.NewTransaction()
+		for chain := range chainToHook {
+			tx.Add(&knftables.Rule{
+				Chain:   chain,
+				Rule:    "meta mark and 0x20000 == 0x20000 counter accept",
+				Comment: knftables.PtrTo("rule to explicitly ACCEPT traffic that comply to network policies"),
+			})
+		}
+		if err := nft.Run(ctx, tx); err != nil {
+			klog.Errorf("nftables: couldn't add explicit accept rules: %v", err)
+		}
+	}
 }
