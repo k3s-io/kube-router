@@ -115,7 +115,7 @@ func TestBasicChains(t *testing.T) {
 		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT { comment \"KUBE-NWPLCY-DEFAULT chain for kube-router\" ; }") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
-		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT counter meta mark set mark or 0x1000") {
+		if !strings.Contains(ipv4Dump, "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-DEFAULT counter meta mark set mark or 0x10000") {
 			t.Errorf("Expected nftables rules not found in dump")
 		}
 		if !strings.Contains(ipv4Dump, "add chain ip kube-router-filter-ipv4 KUBE-NWPLCY-COMMON { comment \"KUBE-NWPLCY-COMMON chain for kube-router\" ; }") {
@@ -170,7 +170,7 @@ func TestNetworkPolicyBuilderNft(t *testing.T) {
 					},
 				},
 			},
-			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-C23KD7UE4TAT3Y5M dport 30000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress namespace nsA\"\n",
+			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-C23KD7UE4TAT3Y5M dport 30000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress namespace nsA\"\n",
 		},
 		{
 			name: "Simple Ingress/Egress Destination Port",
@@ -203,8 +203,8 @@ func TestNetworkPolicyBuilderNft(t *testing.T) {
 					},
 				},
 			},
-			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-IDIX352DRLNY3D23 dport 30000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-ingress-egress namespace nsA\"\n" +
-				"add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-IDIX352DRLNY3D23 dport 37000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from all sources to dest pods selected by policy name: simple-ingress-egress namespace nsA\"\n",
+			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-IDIX352DRLNY3D23 dport 30000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from source pods to all destinations selected by policy name: simple-ingress-egress namespace nsA\"\n" +
+				"add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-IDIX352DRLNY3D23 dport 37000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from all sources to dest pods selected by policy name: simple-ingress-egress namespace nsA\"\n",
 		},
 		{
 			name: "Simple Egress Destination Port Range",
@@ -233,8 +233,8 @@ func TestNetworkPolicyBuilderNft(t *testing.T) {
 					},
 				},
 			},
-			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-2UTXQIFBI5TAPUCL dport 30000-31000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\"\n" +
-				"add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-2UTXQIFBI5TAPUCL dport 34000-35000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\"\n",
+			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-2UTXQIFBI5TAPUCL dport 30000-31000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\"\n" +
+				"add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-2UTXQIFBI5TAPUCL dport 34000-35000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\"\n",
 		},
 		{
 			name: "Port > EndPort (invalid condition, should drop endport)",
@@ -259,7 +259,7 @@ func TestNetworkPolicyBuilderNft(t *testing.T) {
 					},
 				},
 			},
-			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-N5DQE4SCQ56JEMH7 dport 34000 counter meta mark set meta mark or 0x10000 return comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: invalid-endport namespace nsA\"\n",
+			expectedRule: "add rule ip kube-router-filter-ipv4 KUBE-NWPLCY-N5DQE4SCQ56JEMH7 dport 34000 counter meta mark set meta mark or 0x10000 return comment \"ACCEPT traffic from source pods to all destinations selected by policy name: invalid-endport namespace nsA\"\n",
 		},
 	}
 

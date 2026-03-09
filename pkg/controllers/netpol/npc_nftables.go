@@ -257,15 +257,19 @@ func (npc *NetworkPolicyControllerNftables) ensureTopLevelChains() {
 		tx := nft.NewTransaction()
 
 		for _, protocol := range []string{"tcp", "udp"} {
+			var ruleParts []interface{}
+			if family == v1core.IPv6Protocol {
+				ruleParts = []interface{}{"meta l4proto", protocol}
+			} else {
+				ruleParts = []interface{}{"ip", "protocol", protocol}
+			}
+			ruleParts = append(ruleParts,
+				"fib", "daddr", "type", "local", protocol,
+				"dport", npc.serviceNodePortRange,
+				"counter", "return")
 			tx.Add(&knftables.Rule{
-				Chain: kubeInputChainName,
-				Rule: knftables.Concat(
-					"ip",
-					"protocol", protocol,
-					"fib", "daddr", "type", "local", protocol,
-					"dport", npc.serviceNodePortRange,
-					"counter", "return",
-				),
+				Chain:   kubeInputChainName,
+				Rule:    knftables.Concat(ruleParts...),
 				Comment: knftables.PtrTo("allow LOCAL " + protocol + " traffic to node ports"),
 			})
 			klog.V(2).Infof("Allow %s traffic to ingress towards node port range: %s for family: %s",
@@ -362,7 +366,7 @@ func (npc *NetworkPolicyControllerNftables) ensureDefaultNetworkPolicyChain() {
 		tx.Add(&knftables.Rule{
 			Chain: kubeDefaultNetpolChain,
 			Rule: knftables.Concat(
-				"counter", "meta mark", "set mark", "or", "0x1000",
+				"counter", "meta mark", "set mark", "or", "0x10000",
 			),
 			Comment: knftables.PtrTo("mark traffic matching a network policy"),
 		})
@@ -1091,18 +1095,19 @@ func (npc *NetworkPolicyControllerNftables) syncPodFirewallChains(
 			}
 
 			// 4. Fall back to the default netpol chain for directions not covered by a specific policy.
-			if !hasIngressPolicy {
-				tx.Add(&knftables.Rule{
-					Chain:   podFwChainName,
-					Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", kubeDefaultNetpolChain),
-					Comment: knftables.PtrTo("run through default ingress network policy chain"),
-				})
-			}
+			// Egress (saddr) is evaluated before ingress (daddr) to match iptables reference behaviour.
 			if !hasEgressPolicy {
 				tx.Add(&knftables.Rule{
 					Chain:   podFwChainName,
 					Rule:    knftables.Concat(addrKeyword, "saddr", ip, "counter jump", kubeDefaultNetpolChain),
 					Comment: knftables.PtrTo("run through default egress network policy chain"),
+				})
+			}
+			if !hasIngressPolicy {
+				tx.Add(&knftables.Rule{
+					Chain:   podFwChainName,
+					Rule:    knftables.Concat(addrKeyword, "daddr", ip, "counter jump", kubeDefaultNetpolChain),
+					Comment: knftables.PtrTo("run through default ingress network policy chain"),
 				})
 			}
 
