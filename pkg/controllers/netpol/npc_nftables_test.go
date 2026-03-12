@@ -425,3 +425,403 @@ func TestFullPolicySync(t *testing.T) {
 	require.NoError(t, err)
 	// TODO_TF: add assertions to verify the expected rules are present in the dumps
 }
+
+// runNftPolicyRules is a helper shared by extended nftables tests.
+// It builds policy info from the informer, then for each active nft family processes
+// ingress and egress rules into a fresh transaction and commits it to the fake interface.
+func runNftPolicyRules(t *testing.T, npc *NetworkPolicyControllerNftables) {
+	t.Helper()
+	ctx := context.Background()
+	netpols, err := npc.buildNetworkPoliciesInfo()
+	if err != nil {
+		t.Fatalf("buildNetworkPoliciesInfo failed: %v", err)
+	}
+	for ipFamily, nft := range npc.knftInterfaces {
+		for _, np := range netpols {
+			policyChainName := networkPolicyChainName(np.namespace, np.name, "1", ipFamily)
+			tx := nft.NewTransaction()
+			tx.Add(&knftables.Chain{
+				Name:    policyChainName,
+				Comment: knftables.PtrTo("chain for " + np.namespace + "/" + np.name),
+			})
+			tx.Flush(&knftables.Chain{Name: policyChainName})
+			activeSets := make(map[string]bool)
+
+			if np.policyType == kubeEgressPolicyType || np.policyType == kubeBothPolicyType {
+				if err := npc.processEgressRulesNft(tx, np, "", activeSets, "1", ipFamily); err != nil {
+					t.Fatalf("processEgressRulesNft failed: %v", err)
+				}
+			}
+			if np.policyType == kubeIngressPolicyType || np.policyType == kubeBothPolicyType {
+				if err := npc.processIngressRulesNft(tx, np, "", activeSets, "1", ipFamily); err != nil {
+					t.Fatalf("processIngressRulesNft failed: %v", err)
+				}
+			}
+			if err := nft.Run(ctx, tx); err != nil {
+				t.Fatalf("nft.Run failed: %v", err)
+			}
+		}
+	}
+}
+
+// TestNetworkPolicyBuilderNftExtended covers nftables rule generation for scenarios
+// not exercised by TestNetworkPolicyBuilderNft: allow-all ingress/egress, source-pod-only
+// rules, egress allow-all, and ipBlock CIDRs with and without except entries.
+func TestNetworkPolicyBuilderNftExtended(t *testing.T) {
+	port8080 := intstr.FromInt(8080)
+	proto := v1core.ProtocolTCP
+
+	testCases := []struct {
+		name       string
+		netpol     tNetpol
+		assertDump func(t *testing.T, dump string, netpolName string)
+	}{
+		{
+			name: "Ingress allow-all generates match-all accept rule",
+			netpol: tNetpol{
+				name:        "ingress-allow-all",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				ingress:     []netv1.NetworkPolicyIngressRule{{}},
+			},
+			assertDump: func(t *testing.T, dump, polName string) {
+				t.Helper()
+				expected := "counter meta mark set meta mark or 0x10000 return"
+				if !strings.Contains(dump, expected) {
+					t.Errorf("allow-all ingress: expected %q in dump, got:\n%s", expected, dump)
+				}
+				comment := "ACCEPT traffic from all sources to dest pods selected by policy name: " + polName + " namespace nsA"
+				if !strings.Contains(dump, comment) {
+					t.Errorf("allow-all ingress: comment %q not found in dump", comment)
+				}
+			},
+		},
+		{
+			name: "Egress allow-all generates match-all accept rule",
+			netpol: tNetpol{
+				name:        "egress-allow-all",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				egress:      []netv1.NetworkPolicyEgressRule{{}},
+			},
+			assertDump: func(t *testing.T, dump, polName string) {
+				t.Helper()
+				expected := "counter meta mark set meta mark or 0x10000 return"
+				if !strings.Contains(dump, expected) {
+					t.Errorf("allow-all egress: expected %q in dump, got:\n%s", expected, dump)
+				}
+				comment := "ACCEPT traffic from source pods to all destinations selected by policy name: " + polName + " namespace nsA"
+				if !strings.Contains(dump, comment) {
+					t.Errorf("allow-all egress: comment %q not found in dump", comment)
+				}
+			},
+		},
+		{
+			name: "Ingress ports-only generates dport rule without src/dst set",
+			netpol: tNetpol{
+				name:        "ingress-ports-only",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				ingress: []netv1.NetworkPolicyIngressRule{{
+					Ports: []netv1.NetworkPolicyPort{{Protocol: &proto, Port: &port8080}},
+				}},
+			},
+			assertDump: func(t *testing.T, dump, polName string) {
+				t.Helper()
+				// Protocol names from Kubernetes are uppercase (v1.ProtocolTCP = "TCP").
+				if !strings.Contains(dump, "TCP dport 8080") {
+					t.Errorf("ingress ports-only: expected 'TCP dport 8080' in dump, got:\n%s", dump)
+				}
+				// When targetDestPodSetName is "" there must be no daddr set reference.
+				if strings.Contains(dump, "ip daddr @") {
+					t.Errorf("ingress ports-only: unexpected 'ip daddr @...' in dump (target set was empty)")
+				}
+			},
+		},
+		{
+			name: "Ingress from nsB pods generates saddr set with pod IPs",
+			netpol: tNetpol{
+				name:        "ingress-src-pods",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				ingress: []netv1.NetworkPolicyIngressRule{{
+					From: []netv1.NetworkPolicyPeer{{
+						NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"name": "b"}},
+					}},
+				}},
+			},
+			assertDump: func(t *testing.T, dump, _ string) {
+				t.Helper()
+				// Rule must reference the source pod set.
+				if !strings.Contains(dump, "ip saddr @") {
+					t.Errorf("ingress srcPods: expected 'ip saddr @...' in dump, got:\n%s", dump)
+				}
+				// nsB pods: Ba=2.1.1.1, Baa=2.2.2.2, Bab=2.3.2.2 – all should be in the set.
+				for _, ip := range []string{"2.1.1.1", "2.2.2.2", "2.3.2.2"} {
+					if !strings.Contains(dump, ip) {
+						t.Errorf("ingress srcPods: IP %s not found in nft dump", ip)
+					}
+				}
+			},
+		},
+		{
+			name: "Ingress from ipBlock CIDR creates interval set with CIDR element",
+			netpol: tNetpol{
+				name:        "ingress-ipblock",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				ingress: []netv1.NetworkPolicyIngressRule{{
+					From: []netv1.NetworkPolicyPeer{{
+						IPBlock: &netv1.IPBlock{CIDR: "192.168.0.0/24"},
+					}},
+				}},
+			},
+			assertDump: func(t *testing.T, dump, _ string) {
+				t.Helper()
+				setName := nftIndexedSourceIPBlockSetName("nsA", "ingress-ipblock", 0, v1core.IPv4Protocol)
+				if !strings.Contains(dump, setName) {
+					t.Errorf("ipBlock ingress: set %s not found in dump", setName)
+				}
+				if !strings.Contains(dump, "192.168.0.0/24") {
+					t.Errorf("ipBlock ingress: CIDR 192.168.0.0/24 not in dump")
+				}
+				if !strings.Contains(dump, "ip saddr @"+setName) {
+					t.Errorf("ipBlock ingress: rule 'ip saddr @%s' not found in dump", setName)
+				}
+			},
+		},
+		{
+			name: "Ingress from ipBlock with except excludes except CIDR from set",
+			netpol: tNetpol{
+				name:        "ingress-ipblock-except",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				ingress: []netv1.NetworkPolicyIngressRule{{
+					From: []netv1.NetworkPolicyPeer{{
+						IPBlock: &netv1.IPBlock{
+							CIDR:   "10.0.0.0/8",
+							Except: []string{"10.1.0.0/16"},
+						},
+					}},
+				}},
+			},
+			assertDump: func(t *testing.T, dump, _ string) {
+				t.Helper()
+				if !strings.Contains(dump, "10.0.0.0/8") {
+					t.Errorf("ipBlock except: main CIDR 10.0.0.0/8 must be in nft set")
+				}
+				// The except CIDR must NOT appear in the set elements
+				// (nftAddOrReplaceIPBlockSet skips nomatch entries).
+				if strings.Contains(dump, "10.1.0.0/16") {
+					t.Errorf("ipBlock except: except CIDR 10.1.0.0/16 must NOT be in nft set element list")
+				}
+			},
+		},
+		{
+			name: "Egress to ipBlock CIDR creates interval set with CIDR element",
+			netpol: tNetpol{
+				name:        "egress-ipblock",
+				namespace:   "nsA",
+				podSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+				egress: []netv1.NetworkPolicyEgressRule{{
+					To: []netv1.NetworkPolicyPeer{{
+						IPBlock: &netv1.IPBlock{CIDR: "172.16.0.0/12"},
+					}},
+				}},
+			},
+			assertDump: func(t *testing.T, dump, _ string) {
+				t.Helper()
+				setName := nftIndexedDestinationIPBlockSetName("nsA", "egress-ipblock", 0, v1core.IPv4Protocol)
+				if !strings.Contains(dump, setName) {
+					t.Errorf("ipBlock egress: set %s not found in dump", setName)
+				}
+				if !strings.Contains(dump, "172.16.0.0/12") {
+					t.Errorf("ipBlock egress: CIDR 172.16.0.0/12 not in dump")
+				}
+				if !strings.Contains(dump, "ip daddr @"+setName) {
+					t.Errorf("ipBlock egress: rule 'ip daddr @%s' not found in dump", setName)
+				}
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(&v1.NodeList{Items: []v1.Node{*newFakeNode("node", []string{"10.10.10.10"})}})
+	informerFactory, podInformer, nsInformer, netpolInformer := newFakeInformersFromClient(client)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	informerFactory.Start(ctx.Done())
+	cache.WaitForCacheSync(ctx.Done(), podInformer.HasSynced)
+	npc := newUneventfulNfTablesNPC(podInformer, netpolInformer, nsInformer)
+	tCreateFakePods(t, podInformer, nsInformer)
+	// Re-add nsB pods with PodIPs populated; tCreateFakePods only sets PodIP (legacy
+	// single-IP field) which is ignored by getIPsFromPods. Override here so that
+	// source-pod set membership assertions can find the expected addresses.
+	for _, p := range []struct {
+		name   string
+		labels map[string]string
+		ip     string
+	}{
+		{"Ba", map[string]string{"app": "a"}, "2.1.1.1"},
+		{"Baa", map[string]string{"app": "a", "component": "a"}, "2.2.2.2"},
+		{"Bab", map[string]string{"app": "a", "component": "b"}, "2.3.2.2"},
+	} {
+		tAddToInformerStore(t, podInformer, &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: p.name, Namespace: "nsB", Labels: p.labels},
+			Status:     v1.PodStatus{PodIP: p.ip, PodIPs: []v1.PodIP{{IP: p.ip}}},
+		})
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.netpol.createFakeNetpol(t, netpolInformer)
+			runNftPolicyRules(t, npc)
+
+			fakeItf, ok := npc.knftInterfaces[v1core.IPv4Protocol].(*knftables.Fake)
+			if !ok {
+				t.Fatal("expected *knftables.Fake for IPv4")
+			}
+			dump := fakeItf.Dump()
+			t.Logf("nft dump:\n%s", dump)
+			tc.assertDump(t, dump, tc.netpol.name)
+
+			// Clean up policy from informer store before next test.
+			key := tc.netpol.namespace + "/" + tc.netpol.name
+			obj, exists, err := npc.npLister.GetByKey(key)
+			if err == nil && exists {
+				_ = npc.npLister.Delete(obj)
+			}
+		})
+	}
+}
+
+// TestNftablesChainsIdempotency verifies that calling the chain-setup helpers multiple
+// times produces an identical nftables state (no duplicated rules or chains).
+func TestNftablesChainsIdempotency(t *testing.T) {
+	client := fake.NewSimpleClientset(&v1.NodeList{Items: []v1.Node{*newFakeNode("node", []string{"10.10.10.10"})}})
+	informerFactory, podInformer, nsInformer, netpolInformer := newFakeInformersFromClient(client)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	informerFactory.Start(ctx.Done())
+	cache.WaitForCacheSync(ctx.Done(), podInformer.HasSynced)
+	npc := newUneventfulNfTablesNPC(podInformer, netpolInformer, nsInformer)
+
+	// First invocation.
+	npc.ensureTopLevelChains()
+	npc.ensureDefaultNetworkPolicyChain()
+	npc.ensureCommonPolicyChain()
+
+	fakeItf, ok := npc.knftInterfaces[v1core.IPv4Protocol].(*knftables.Fake)
+	require.True(t, ok, "expected *knftables.Fake for IPv4")
+	dumpAfterFirst := fakeItf.Dump()
+
+	// Second invocation – must produce the same state.
+	npc.ensureTopLevelChains()
+	npc.ensureDefaultNetworkPolicyChain()
+	npc.ensureCommonPolicyChain()
+	dumpAfterSecond := fakeItf.Dump()
+
+	if dumpAfterFirst != dumpAfterSecond {
+		t.Errorf("nftables state changed on second call to ensure* helpers:\nFIRST:\n%s\nSECOND:\n%s",
+			dumpAfterFirst, dumpAfterSecond)
+	}
+}
+
+// TestNftablesStalePolicyCleanup verifies that policy chains and named sets that no longer
+// correspond to an active NetworkPolicy are deleted during the next syncNetworkPolicyChains
+// call.
+func TestNftablesStalePolicyCleanup(t *testing.T) {
+	fixtureDir := filepath.Join("..", "..", "..", "testdata", "ipset_test_1")
+	nodes := testhelpers.LoadNodeList(t, filepath.Join(fixtureDir, "nodes.yaml"))
+
+	client := fake.NewSimpleClientset()
+	for i := range nodes.Items {
+		_, err := client.CoreV1().Nodes().Create(
+			context.Background(), nodes.Items[i].DeepCopy(), metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	config := &options.KubeRouterConfig{
+		EnableIPv4:       true,
+		EnableIPv6:       false,
+		ClusterIPCIDRs:   []string{"10.96.0.0/16"},
+		HostnameOverride: nodes.Items[0].Name,
+		NodePortRange:    "30000-32767",
+	}
+
+	informerFactory := informers.NewSharedInformerFactory(client, 0)
+	podInformer := informerFactory.Core().V1().Pods().Informer()
+	npInformer := informerFactory.Networking().V1().NetworkPolicies().Informer()
+	nsInformer := informerFactory.Core().V1().Namespaces().Informer()
+
+	ipv4KNft := knftables.NewFake(knftables.IPv4Family, ipv4Table)
+	tx := ipv4KNft.NewTransaction()
+	tx.Add(&knftables.Table{Comment: knftables.PtrTo("rules for " + ipv4Table)})
+	require.NoError(t, ipv4KNft.Run(context.TODO(), tx))
+
+	linkQ := utils.NewFakeLocalLinkQuerier(collectNodeIPs(nodes), nil)
+	npc, err := NewNetworkPolicyController(
+		client, config,
+		podInformer, npInformer, nsInformer,
+		&sync.Mutex{}, linkQ, nil, nil,
+		map[v1core.IPFamily]knftables.Interface{v1core.IPv4Protocol: ipv4KNft},
+		true,
+	)
+	require.NoError(t, err)
+
+	npc.ensureTopLevelChains()
+	npc.ensureDefaultNetworkPolicyChain()
+	npc.ensureCommonPolicyChain()
+
+	// Create two simple policies: policy-keep and policy-delete.
+	makePolicy := func(name string) *netv1.NetworkPolicy {
+		return &netv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: netv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{},
+				PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeIngress},
+				Ingress:     []netv1.NetworkPolicyIngressRule{{}},
+			},
+		}
+	}
+	_ = npInformer.GetStore().Add(makePolicy("policy-keep"))
+	_ = npInformer.GetStore().Add(makePolicy("policy-delete"))
+	// Need a namespace so pod lookups don't fail.
+	_ = nsInformer.GetStore().Add(&v1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+	})
+
+	// First sync: both policies → both chains created.
+	info1, err := npc.buildNetworkPoliciesInfo()
+	require.NoError(t, err)
+	_, _, err = npc.syncNetworkPolicyChains(info1, "v1")
+	require.NoError(t, err)
+
+	// Compute chain names so we can assert on the dump.
+	keepChain := networkPolicyChainName("default", "policy-keep", "v1", v1core.IPv4Protocol)
+	deleteChain := networkPolicyChainName("default", "policy-delete", "v1", v1core.IPv4Protocol)
+
+	dumpAfterFirst := ipv4KNft.Dump()
+	t.Logf("dump after first sync:\n%s", dumpAfterFirst)
+
+	require.Contains(t, dumpAfterFirst, keepChain, "policy-keep chain must exist after first sync")
+	require.Contains(t, dumpAfterFirst, deleteChain, "policy-delete chain must exist after first sync")
+
+	// Remove policy-delete from the informer store and re-sync.
+	obj, exists, err := npInformer.GetStore().GetByKey("default/policy-delete")
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, npInformer.GetStore().Delete(obj))
+
+	info2, err := npc.buildNetworkPoliciesInfo()
+	require.NoError(t, err)
+	_, _, err = npc.syncNetworkPolicyChains(info2, "v1")
+	require.NoError(t, err)
+
+	dumpAfterSecond := ipv4KNft.Dump()
+	t.Logf("dump after second sync:\n%s", dumpAfterSecond)
+
+	require.Contains(t, dumpAfterSecond, keepChain, "policy-keep chain must still exist after second sync")
+	if strings.Contains(dumpAfterSecond, deleteChain) {
+		t.Errorf("policy-delete chain %s must be removed after second sync, but found in dump", deleteChain)
+	}
+}
