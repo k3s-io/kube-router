@@ -89,6 +89,76 @@ jobs:
           go test -tags integration -v -timeout 60s -run TestIntegration \
           github.com/cloudnativelabs/kube-router/v2/pkg/controllers/netpol/...
 
+  # E2E tests – spins up a Kind cluster, deploys kube-router, then runs the
+  # Ginkgo-based e2e suite. Skipped for fork PRs (no push secrets needed here,
+  # but Kind setup requires docker which is available on ubuntu-latest runners).
+  ci-e2e-tests:
+    name: ci-e2e-tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+    env:
+      KUBECONFIG: /home/runner/.kube/config
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+      id: go
+
+    - name: Install Kind
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+
+    - name: Create Kind cluster (dual-stack)
+      run: |
+        cat <<'EOF' | kind create cluster --name e2e --config=-
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        networking:
+          disableDefaultCNI: true
+          ipFamily: dual
+        nodes:
+          - role: control-plane
+          - role: worker
+        EOF
+
+    - name: Build kube-router image
+      run: docker build -t kube-router:e2e-test .
+
+    - name: Load kube-router image into Kind
+      run: kind load docker-image kube-router:e2e-test --name e2e
+
+    - name: Deploy kube-router (nftables NetworkPolicy mode)
+      run: |
+        kubectl apply -f daemonset/generic-kuberouter.yaml --dry-run=client -o yaml \
+          | sed 's|cloudnativelabs/kube-router:.*|kube-router:e2e-test|g' \
+          | sed 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+          | kubectl apply -f -
+
+    - name: Wait for kube-router DaemonSet to be ready
+      run: kubectl -n kube-system rollout status daemonset/kube-router --timeout=120s
+
+    - name: Wait for nodes to become Ready
+      run: kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+    - name: Run E2E test suite
+      run: |
+        go test -tags e2e -v -timeout 600s \
+          github.com/cloudnativelabs/kube-router/v2/test/e2e/netpol/...
+
+    - name: Collect kube-router logs on failure
+      if: failure()
+      run: kubectl -n kube-system logs -l app=kube-router --tail=200 || true
+
+    - name: Delete Kind cluster
+      if: always()
+      run: kind delete cluster --name e2e
+
   # Builds Kube-Router binary
   ci-build-kube-router:
     name: ci-build-kube-router
