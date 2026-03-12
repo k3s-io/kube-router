@@ -64,6 +64,31 @@ jobs:
       env:
         DOCKER_BUILD_IMAGE: ${{ env.BUILDTIME_BASE }}
 
+  # Executes Integration Tests (require nft binary + kernel nftables support)
+  ci-integration-tests:
+    name: ci-integration-tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+      id: go
+
+    - name: Install nftables
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y nftables
+
+    - name: Run integration tests for kube-router netpol
+      run: |
+        sudo --preserve-env=PATH,HOME,GOPATH,GOROOT \
+          go test -tags integration -v -timeout 60s -run TestIntegration \
+          github.com/cloudnativelabs/kube-router/v2/pkg/controllers/netpol/...
+
   # Builds Kube-Router binary
   ci-build-kube-router:
     name: ci-build-kube-router
