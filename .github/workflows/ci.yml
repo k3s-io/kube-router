@@ -152,6 +152,20 @@ jobs:
     - name: Wait for kube-router DaemonSet to be ready
       run: kubectl -n kube-system rollout status daemonset/kube-router --timeout=120s
 
+    - name: Dump initial cluster state
+      run: |
+        echo "=== Nodes ==="
+        kubectl get nodes -o wide
+        echo ""
+        echo "=== Pods (all namespaces) ==="
+        kubectl get pods -A -o wide
+        echo ""
+        echo "=== kube-router DaemonSet ==="
+        kubectl -n kube-system describe daemonset/kube-router
+        echo ""
+        echo "=== kube-router initial logs ==="
+        kubectl -n kube-system logs -l k8s-app=kube-router --tail=100
+
     - name: Wait for nodes to become Ready
       run: kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
@@ -160,9 +174,36 @@ jobs:
         go test -tags e2e -v -timeout 600s \
           github.com/cloudnativelabs/kube-router/v2/test/e2e/netpol/...
 
-    - name: Collect kube-router logs on failure
+    - name: Collect debug info on failure
       if: failure()
-      run: kubectl -n kube-system logs -l app=kube-router --tail=200 || true
+      run: |
+        echo "=== Nodes ==="
+        kubectl get nodes -o wide || true
+        echo ""
+        echo "=== Node descriptions ==="
+        kubectl describe nodes || true
+        echo ""
+        echo "=== All pods ==="
+        kubectl get pods -A -o wide || true
+        echo ""
+        echo "=== Events (all namespaces, sorted by time) ==="
+        kubectl get events -A --sort-by='.lastTimestamp' || true
+        echo ""
+        echo "=== kube-router DaemonSet description ==="
+        kubectl -n kube-system describe daemonset/kube-router || true
+        echo ""
+        echo "=== kube-router pod descriptions ==="
+        kubectl -n kube-system describe pods -l k8s-app=kube-router || true
+        echo ""
+        echo "=== kube-router full logs ==="
+        kubectl -n kube-system logs -l k8s-app=kube-router --tail=500 || true
+        echo ""
+        echo "=== nftables ruleset (per kube-router pod) ==="
+        for pod in $(kubectl -n kube-system get pods -l k8s-app=kube-router -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "--- $pod ---"
+          kubectl -n kube-system exec "$pod" -- nft list ruleset 2>&1 || true
+          echo ""
+        done
 
     - name: Delete Kind cluster
       if: always()

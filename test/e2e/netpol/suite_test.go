@@ -13,6 +13,7 @@
 package netpol_e2e
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -54,4 +55,15 @@ var _ = BeforeSuite(func() {
 	if err != nil {
 		Fail("create Kubernetes client: " + err.Error())
 	}
+})
+
+// ReportAfterEach dumps kube-router logs and nftables state to GinkgoWriter
+// whenever a spec fails, providing context for CI failures.
+var _ = ReportAfterEach(func(report SpecReport) {
+	if !report.Failed() {
+		return
+	}
+	ctx := context.Background()
+	dumpKubeRouterLogs(ctx)
+	dumpNFTablesState(ctx)
 })

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -207,17 +208,20 @@ func deletePolicy(ns, name string) {
 func canConnect(clientPod *corev1.Pod, dstIP string, port int) bool {
 	GinkgoHelper()
 	cmd := []string{"nc", "-zw2", dstIP, fmt.Sprintf("%d", port)}
-	_, _, exitCode, err := execInPod(clientPod.Namespace, clientPod.Name, "client", cmd)
-	if err != nil {
-		return false
-	}
-	return exitCode == 0
+	stdout, stderr, exitCode, err := execInPod(clientPod.Namespace, clientPod.Name, "client", cmd)
+	connected := err == nil && exitCode == 0
+	GinkgoWriter.Printf("[probe] %s/%s → %s:%d  connected=%v (exit=%d err=%v stdout=%q stderr=%q)\n",
+		clientPod.Namespace, clientPod.Name, dstIP, port, connected, exitCode, err,
+		strings.TrimSpace(stdout), strings.TrimSpace(stderr))
+	return connected
 }
 
 // assertConnected polls until a connection from clientPod to dstIP:port
 // succeeds, or fails the spec after pollTimeout.
 func assertConnected(clientPod *corev1.Pod, dstIP string, port int) {
 	GinkgoHelper()
+	GinkgoWriter.Printf("[assert] assertConnected: pod %s/%s → %s:%d (timeout=%s)\n",
+		clientPod.Namespace, clientPod.Name, dstIP, port, pollTimeout)
 	Eventually(func() bool {
 		return canConnect(clientPod, dstIP, port)
 	}, pollTimeout, pollInterval).Should(BeTrue(),
@@ -231,6 +235,8 @@ func assertConnected(clientPod *corev1.Pod, dstIP string, port int) {
 // time to program the policy.
 func assertBlocked(clientPod *corev1.Pod, dstIP string, port int) {
 	GinkgoHelper()
+	GinkgoWriter.Printf("[assert] assertBlocked: pod %s/%s → %s:%d (for=%s)\n",
+		clientPod.Namespace, clientPod.Name, dstIP, port, consistentlyDuration)
 	// Give kube-router time to sync before sampling.
 	time.Sleep(pollInterval)
 	Consistently(func() bool {
@@ -309,5 +315,62 @@ func denyAllIngress(ns, policyName string, podSelector metav1.LabelSelector) *ne
 			PodSelector: podSelector,
 			PolicyTypes: []netv1.PolicyType{netv1.PolicyTypeIngress},
 		},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Debug helpers – called on spec failure via ReportAfterEach
+// ---------------------------------------------------------------------------
+
+// dumpKubeRouterLogs streams the last 200 lines of every kube-router pod's
+// log to GinkgoWriter so they appear in the test report when a spec fails.
+func dumpKubeRouterLogs(ctx context.Context) {
+	GinkgoWriter.Println("[debug] === kube-router pod logs ===")
+	pods, err := k8sClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
+		LabelSelector: "k8s-app=kube-router",
+	})
+	if err != nil {
+		GinkgoWriter.Printf("[debug] list kube-router pods: %v\n", err)
+		return
+	}
+	tail := int64(200)
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		GinkgoWriter.Printf("[debug] --- pod %s (node %s) ---\n", pod.Name, pod.Spec.NodeName)
+		req := k8sClient.CoreV1().Pods("kube-system").GetLogs(pod.Name, &corev1.PodLogOptions{
+			TailLines: &tail,
+		})
+		rc, err := req.Stream(ctx)
+		if err != nil {
+			GinkgoWriter.Printf("[debug] GetLogs(%s): %v\n", pod.Name, err)
+			continue
+		}
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, rc)
+		rc.Close()
+		GinkgoWriter.Print(buf.String())
+	}
+}
+
+// dumpNFTablesState executes `nft list ruleset` inside each kube-router pod
+// and writes the ruleset to GinkgoWriter.
+func dumpNFTablesState(ctx context.Context) {
+	GinkgoWriter.Println("[debug] === nftables ruleset (per kube-router pod) ===")
+	pods, err := k8sClient.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
+		LabelSelector: "k8s-app=kube-router",
+	})
+	if err != nil {
+		GinkgoWriter.Printf("[debug] list kube-router pods for nft dump: %v\n", err)
+		return
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		GinkgoWriter.Printf("[debug] --- nft list ruleset: pod %s (node %s) ---\n", pod.Name, pod.Spec.NodeName)
+		stdout, stderr, _, execErr := execInPod("kube-system", pod.Name, "kube-router", []string{"nft", "list", "ruleset"})
+		if execErr != nil {
+			GinkgoWriter.Printf("[debug] nft list ruleset failed: %v\n  stderr: %s\n", execErr, stderr)
+			continue
+		}
+		GinkgoWriter.Print(stdout)
 	}
 }
