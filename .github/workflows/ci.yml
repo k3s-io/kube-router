@@ -145,7 +145,7 @@ jobs:
     - name: Deploy kube-router (nftables NetworkPolicy mode)
       run: |
         kubectl apply -f daemonset/generic-kuberouter.yaml --dry-run=client -o yaml \
-          | sed 's|cloudnativelabs/kube-router:.*|kube-router:e2e-test|g' \
+          | sed 's|[^ ]*cloudnativelabs/kube-router[^ ]*|kube-router:e2e-test|g' \
           | sed 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
           | kubectl apply -f -
 
