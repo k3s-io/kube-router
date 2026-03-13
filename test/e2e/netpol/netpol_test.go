@@ -212,8 +212,13 @@ var _ = Describe("NetworkPolicy", func() {
 		// Test 63
 		It("allows only the specified TCP port and blocks other ports", func() {
 			ns := createNamespace(nil)
-			// Server listens on altPort; policy allows only serverPort.
-			server := launchServerOnPort(ns.Name, "server", map[string]string{"app": "server"}, altPort)
+			// serverAllowed listens on serverPort (the policy-allowed port) so
+			// assertConnected can complete a real TCP handshake.
+			// serverBlocked listens on altPort (the policy-blocked port) so
+			// assertBlocked verifies a genuine DROP rather than a vacuous
+			// ECONNREFUSED from a missing listener.
+			serverAllowed := launchServer(ns.Name, "server-allowed", map[string]string{"app": "server"})
+			serverBlocked := launchServerOnPort(ns.Name, "server-blocked", map[string]string{"app": "server"}, altPort)
 			client := launchClient(ns.Name, "client", map[string]string{"app": "client"})
 
 			applyPolicy(&netv1.NetworkPolicy{
@@ -226,8 +231,8 @@ var _ = Describe("NetworkPolicy", func() {
 					}},
 				},
 			})
-			assertConnected(client, podIPv4(server), serverPort)
-			assertBlocked(client, podIPv4(server), altPort)
+			assertConnected(client, podIPv4(serverAllowed), serverPort)
+			assertBlocked(client, podIPv4(serverBlocked), altPort)
 		})
 
 		// Test 64
@@ -455,8 +460,13 @@ var _ = Describe("NetworkPolicy", func() {
 		It("allows egress to a specific port only and blocks other ports", func() {
 			ns := createNamespace(nil)
 			client := launchClient(ns.Name, "client", map[string]string{"app": "client"})
-			// Server listens on altPort; policy allows only serverPort.
-			server := launchServerOnPort(ns.Name, "server", map[string]string{"app": "server"}, altPort)
+			// serverAllowed listens on serverPort (the policy-allowed port) so
+			// assertConnected can complete a real TCP handshake.
+			// serverBlocked listens on altPort (the policy-blocked port) so
+			// assertBlocked verifies a genuine DROP rather than a vacuous
+			// ECONNREFUSED from a missing listener.
+			serverAllowed := launchServer(ns.Name, "server-allowed", map[string]string{"app": "server"})
+			serverBlocked := launchServerOnPort(ns.Name, "server-blocked", map[string]string{"app": "server"}, altPort)
 
 			applyPolicy(&netv1.NetworkPolicy{
 				ObjectMeta: metav1.ObjectMeta{Name: "egress-specific-port", Namespace: ns.Name},
@@ -468,8 +478,8 @@ var _ = Describe("NetworkPolicy", func() {
 					}},
 				},
 			})
-			assertConnected(client, podIPv4(server), serverPort)
-			assertBlocked(client, podIPv4(server), altPort)
+			assertConnected(client, podIPv4(serverAllowed), serverPort)
+			assertBlocked(client, podIPv4(serverBlocked), altPort)
 		})
 
 		// Test 73
