@@ -3,6 +3,7 @@ name: continuous-integration
 on:
   push:
     branches:
+    - refactor-iptables
     - master
     - v[1-9].*
     - prep-v[1-9].*
@@ -57,11 +58,161 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
       id: go
 
+    - name: Download Go modules
+      run: go mod download
+
     - name: Run unit tests for kube-router
       run: |
         make test-pretty
       env:
         DOCKER_BUILD_IMAGE: ${{ env.BUILDTIME_BASE }}
+
+  # Executes Integration Tests (require nft binary + kernel nftables support)
+  ci-integration-tests:
+    name: ci-integration-tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+      id: go
+
+    - name: Download Go modules
+      run: go mod download
+
+    - name: Install nftables
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y nftables
+
+    - name: Run integration tests for kube-router netpol
+      run: |
+        sudo --preserve-env=PATH,HOME,GOPATH,GOROOT \
+          go test -tags integration -v -timeout 60s -run TestIntegration \
+          github.com/cloudnativelabs/kube-router/v2/pkg/controllers/netpol/...
+
+  # E2E tests – spins up a Kind cluster, deploys kube-router, then runs the
+  # Ginkgo-based e2e suite. Skipped for fork PRs (no push secrets needed here,
+  # but Kind setup requires docker which is available on ubuntu-latest runners).
+  ci-e2e-tests:
+    name: ci-e2e-tests
+    runs-on: ubuntu-latest
+    # if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+    env:
+      KUBECONFIG: /home/runner/.kube/config
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+      id: go
+
+    - name: Download Go modules
+      run: go mod download
+
+    - name: Install nftables
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y nftables
+
+    - name: Install Kind
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+
+    - name: Create Kind cluster (dual-stack)
+      run: |
+        cat <<'EOF' | kind create cluster --name e2e --config=-
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        networking:
+          disableDefaultCNI: true
+          ipFamily: dual
+        nodes:
+          - role: control-plane
+          - role: worker
+        EOF
+
+    - name: Build kube-router image
+      run: docker build -t kube-router:e2e-test .
+
+    - name: Load kube-router image into Kind
+      run: kind load docker-image kube-router:e2e-test --name e2e
+
+    - name: Deploy kube-router (nftables NetworkPolicy mode)
+      run: |
+        kubectl apply -f daemonset/generic-kuberouter.yaml --dry-run=client -o yaml \
+          | sed 's|[^ ]*cloudnativelabs/kube-router[^ ]*|kube-router:e2e-test|g' \
+          | sed 's|imagePullPolicy: Always|imagePullPolicy: Never|g' \
+          | kubectl apply -f -
+
+    - name: Wait for kube-router DaemonSet to be ready
+      run: kubectl -n kube-system rollout status daemonset/kube-router --timeout=120s
+
+    - name: Dump initial cluster state
+      run: |
+        echo "=== Nodes ==="
+        kubectl get nodes -o wide
+        echo ""
+        echo "=== Pods (all namespaces) ==="
+        kubectl get pods -A -o wide
+        echo ""
+        echo "=== kube-router DaemonSet ==="
+        kubectl -n kube-system describe daemonset/kube-router
+        echo ""
+        echo "=== kube-router initial logs ==="
+        kubectl -n kube-system logs -l k8s-app=kube-router --tail=100
+
+    - name: Wait for nodes to become Ready
+      run: kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+    - name: Run E2E test suite
+      run: |
+        go test -tags e2e -v -timeout 600s \
+          github.com/cloudnativelabs/kube-router/v2/test/e2e/netpol/...
+
+    - name: Collect debug info on failure
+      if: failure()
+      run: |
+        echo "=== Nodes ==="
+        kubectl get nodes -o wide || true
+        echo ""
+        echo "=== Node descriptions ==="
+        kubectl describe nodes || true
+        echo ""
+        echo "=== All pods ==="
+        kubectl get pods -A -o wide || true
+        echo ""
+        echo "=== Events (all namespaces, sorted by time) ==="
+        kubectl get events -A --sort-by='.lastTimestamp' || true
+        echo ""
+        echo "=== kube-router DaemonSet description ==="
+        kubectl -n kube-system describe daemonset/kube-router || true
+        echo ""
+        echo "=== kube-router pod descriptions ==="
+        kubectl -n kube-system describe pods -l k8s-app=kube-router || true
+        echo ""
+        echo "=== kube-router full logs ==="
+        kubectl -n kube-system logs -l k8s-app=kube-router --tail=500 || true
+        echo ""
+        echo "=== nftables ruleset (per kube-router pod) ==="
+        for pod in $(kubectl -n kube-system get pods -l k8s-app=kube-router -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "--- $pod ---"
+          kubectl -n kube-system exec "$pod" -- nft list ruleset 2>&1 || true
+          echo ""
+        done
+
+    - name: Delete Kind cluster
+      if: always()
+      run: kind delete cluster --name e2e
 
   # Builds Kube-Router binary
   ci-build-kube-router:
@@ -76,6 +227,9 @@ jobs:
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
+
+    - name: Download Go modules
+      run: go mod download
 
     - name: Build kube-router
       run: |
