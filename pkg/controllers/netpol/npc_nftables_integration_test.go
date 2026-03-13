@@ -51,7 +51,7 @@ func skipIfNoNftables(t *testing.T, family knftables.Family, table string) knfta
 	ctx := context.Background()
 	nft, err := initTable(ctx, family, table)
 	if err != nil {
-		t.Skipf("nftables not available (requires nft binary ≥ 1.0.1 and CAP_NET_ADMIN): %v", err)
+		t.Fatalf("nftables not available (requires nft binary ≥ 1.0.1 and CAP_NET_ADMIN): %v", err)
 	}
 	t.Cleanup(func() {
 		tx := nft.NewTransaction()
