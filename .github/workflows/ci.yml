@@ -31,10 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
@@ -49,10 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
@@ -69,10 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
@@ -87,16 +87,16 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
     - name: Login to DockerHub
-      uses: docker/login-action@v3
+      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -114,7 +114,7 @@ jobs:
       id: extract_tag
 
     - name: Build and push - New Push
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       if: ${{ startsWith(github.ref, 'refs/tags/v') != true && github.event_name != 'pull_request' }}
       with:
         context: .
@@ -131,7 +131,7 @@ jobs:
         tags: cloudnativelabs/kube-router-git:${{ steps.extract_branch.outputs.branch }}
 
     - name: Build and push - New PR
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       if: github.event_name == 'pull_request'
       with:
         context: .
@@ -145,7 +145,7 @@ jobs:
 
     # Tagging a release candidate, don't update latest
     - name: Build and push - New Tag (Release Candidate)
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       if: ${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-rc') }}
       with:
         context: .
@@ -164,7 +164,7 @@ jobs:
 
     # Tagging a proper release, update latest
     - name: Build and push - New Tag
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
       if: ${{ startsWith(github.ref, 'refs/tags/v') && ! contains(github.ref, '-rc') }}
       with:
         context: .
@@ -190,16 +190,16 @@ jobs:
       contents: write
     steps:
     - name: Check out code into the Go module directory
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
     - name: Set up Go 1.x
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
       with:
         go-version: ${{ env.GO_VERSION }}
       id: go
 
     - name: Run GoReleaser
-      uses: goreleaser/goreleaser-action@v7
+      uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7
       with:
         version: "~> v2"
         distribution: goreleaser
