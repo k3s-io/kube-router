@@ -163,6 +163,11 @@ func (npc *NetworkPolicyController) syncNetworkPolicyChains(networkPoliciesInfo 
 				"--limit", limit, "--limit-burst", limitBurst, "-m", "mark", "!", "--mark", "0x10000/0x10000",
 				"-j", "NFLOG", "--nflog-group", "100", "--nflog-prefix", logComment, "\n"}
 			npc.filterTableRules[ipFamily].WriteString(strings.Join(logArgs, " "))
+			if isMonitorPolicy(policy) {
+				monitorRule := []string{"-A", policyChainName, "-m", "comment", "--comment", "\"rule to mark to monitor traffic\"",
+					"-m", "mark", "!", "--mark", "0x10000/0x10000", "-j", "MARK", "--set-xmark", "0x50000/0x50000", "\n"}
+				npc.filterTableRules[ipFamily].WriteString(strings.Join(monitorRule, " "))
+			}
 		}
 	}
 
@@ -510,7 +515,7 @@ func (npc *NetworkPolicyController) appendRuleToPolicyChain(policyChainName, com
 	}
 
 	//nolint:gocritic // we want to append to a separate array here so that we can re-use args below
-	markArgs := append(args, "-j", "MARK", "--set-xmark", "0x10000/0x10000", "\n")
+	markArgs := append(args, "-j", "MARK", "--set-xmark", "0x10000/0x50000", "\n")
 	npc.filterTableRules[ipFamily].WriteString(strings.Join(markArgs, " "))
 
 	args = append(args, "-m", "mark", "--mark", "0x10000/0x10000", "-j", "RETURN", "\n")
@@ -987,4 +992,8 @@ func policyRulePortsHasNamedPort(npPorts []networking.NetworkPolicyPort) bool {
 		}
 	}
 	return false
+}
+
+func isMonitorPolicy(policy networkPolicyInfo) bool {
+	return policy.annotations["kube-router.io/network-policy.monitor"] == "true"
 }
